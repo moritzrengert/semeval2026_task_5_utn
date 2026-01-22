@@ -1,0 +1,3 @@
+[submodule "semeval26-05-scripts"]
+	path = semeval26-05-scripts
+	url = git@github.com:Janosch-Gehring/semeval26-05-scripts.git
