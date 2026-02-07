@@ -77,10 +77,11 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, n
             logits = model(batch["input_ids"], batch["attention_mask"])["ordinal_logits"]
         loss = coral_loss(logits, batch["ordinal_labels"], num_classes=num_classes)
         preds = coral_expected_value(logits) + 1.0
+        class_pred = (torch.sigmoid(logits) > 0.5).sum(dim=-1)
         mse_sum += torch.mean((preds - batch["scores"]) ** 2).item() * batch["scores"].size(0)
         mae_sum += torch.abs(preds - batch["scores"]).sum().item()
         loss_sum += loss.item() * batch["scores"].size(0)
-        acc_sum += (logits.argmax(dim=-1) == batch["ordinal_labels"]).sum().item()
+        acc_sum += (class_pred == batch["ordinal_labels"]).sum().item()
         total += batch["scores"].size(0)
     if total == 0:
         return {"loss": 0.0, "mse": 0.0, "mae": 0.0, "acc": 0.0}
@@ -103,13 +104,12 @@ def train(args: argparse.Namespace) -> None:
         device = torch.device("cpu")
     train_ds = load_expert_dataset(args.train_path, num_classes=args.num_classes, label_key=args.label_key)
     dev_ds = load_expert_dataset(args.dev_path, num_classes=args.num_classes, label_key=args.label_key) if args.dev_path else None
-    test_ds = load_expert_dataset(args.test_path, num_classes=args.num_classes, label_key=args.label_key) if args.test_path else None
 
     model, collate_fn, expert_name = build_expert(args)
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
     dev_loader = DataLoader(dev_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn) if dev_ds else None
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn) if test_ds else None
+    test_loader = None
 
     model.to(device)
     optimizer = torch.optim.AdamW(
@@ -135,12 +135,6 @@ def train(args: argparse.Namespace) -> None:
                 f"[{expert_name}] dev epoch {epoch+1}: loss={metrics['loss']:.4f}, mse={metrics['mse']:.4f}, mae={metrics['mae']:.4f}, acc={metrics['acc']:.4f}"
             )
 
-    if test_loader:
-        test_metrics = evaluate(model, test_loader, device, num_classes=args.num_classes)
-        print(
-            f"[{expert_name}] test: loss={test_metrics['loss']:.4f}, mse={test_metrics['mse']:.4f}, mae={test_metrics['mae']:.4f}, acc={test_metrics['acc']:.4f}"
-        )
-
     if args.save_path:
         save_path = Path(args.save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,10 +147,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expert", choices=["nli", "sbert"], default="nli")
     parser.add_argument("--train-path", type=str, default="semeval26-05-scripts/data/train.json")
     parser.add_argument("--dev-path", type=str, default="semeval26-05-scripts/data/dev.json")
-    parser.add_argument("--test-path", type=str, default="semeval26-05-scripts/data/test.json")
     parser.add_argument("--label-key", type=str, default="average")
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--epochs", type=int, default=2)
+    parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--dropout", type=float, default=0.1)

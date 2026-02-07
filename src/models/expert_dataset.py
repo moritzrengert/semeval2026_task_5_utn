@@ -34,10 +34,15 @@ class SemevalExpertDataset(Dataset):
         records: Sequence[Dict[str, Any]],
         num_classes: int = 5,
         label_key: str = "average",
+        require_labels: bool = True,
+        drop_invalid_labels: bool = False,
     ):
-        self.records = list(records)
+        self.require_labels = require_labels
+        self.drop_invalid_labels = drop_invalid_labels
+        self.records = self._filter_records(records, label_key) if require_labels else list(records)
         self.num_classes = num_classes
         self.label_key = label_key
+        self.has_labels = require_labels
 
     def __len__(self) -> int:
         return len(self.records)
@@ -45,10 +50,16 @@ class SemevalExpertDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         record = self.records[idx]
         sample_id = str(record.get("sample_id", idx))
-        if self.label_key not in record:
-            raise KeyError(f"Record {sample_id} is missing label '{self.label_key}'")
-        label_val = float(record[self.label_key])
-        ordinal_label = ordinal_class(label_val, self.num_classes)
+        if self.require_labels:
+            if self.label_key not in record:
+                raise KeyError(f"Record {sample_id} is missing label '{self.label_key}'")
+            label_val = float(record[self.label_key])
+            ordinal_label = ordinal_class(label_val, self.num_classes)
+            label_tensor = torch.tensor(label_val, dtype=torch.float)
+            ordinal_tensor = torch.tensor(ordinal_label, dtype=torch.long)
+        else:
+            label_tensor = None
+            ordinal_tensor = None
         context = build_context(record)
         meaning = str(record.get("judged_meaning", ""))
         hypothesis = build_hypothesis(record)
@@ -58,9 +69,25 @@ class SemevalExpertDataset(Dataset):
             "gloss": meaning,
             "premise": context,
             "hypothesis": hypothesis,
-            "label": torch.tensor(label_val, dtype=torch.float),
-            "ordinal_label": torch.tensor(ordinal_label, dtype=torch.long),
+            "label": label_tensor,
+            "ordinal_label": ordinal_tensor,
         }
+
+    def _filter_records(self, records: Sequence[Dict[str, Any]], label_key: str) -> Sequence[Dict[str, Any]]:
+        filtered = []
+        for rec in records:
+            if label_key not in rec:
+                if self.drop_invalid_labels:
+                    continue
+                raise KeyError(f"Record is missing label '{label_key}'")
+            try:
+                float(rec[label_key])
+            except (TypeError, ValueError):
+                if self.drop_invalid_labels:
+                    continue
+                raise ValueError(f"Label '{label_key}' must be numeric, got {rec[label_key]!r}")
+            filtered.append(rec)
+        return filtered
 
 
 def load_expert_dataset(path: str | None, num_classes: int = 5, label_key: str = "average") -> SemevalExpertDataset:
