@@ -1,6 +1,6 @@
 """Utilities and models for the ensemble-to-ordinal head."""
 
-from ..utils.data import (
+from .data import (
     EnsembleDataset,
     Vocabulary,
     build_collate_fn,
