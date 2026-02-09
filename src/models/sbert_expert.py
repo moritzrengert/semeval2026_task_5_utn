@@ -69,6 +69,7 @@ class SbertSemanticMatchingExpert(torch.nn.Module):
         self.config = config
         self.tokenizer = AutoTokenizer.from_pretrained(config.model_name)
         self.encoder = AutoModel.from_pretrained(config.model_name)
+        self.finetune = False
         self.encoder.eval()
         for param in self.encoder.parameters():
             param.requires_grad = False
@@ -80,6 +81,7 @@ class SbertSemanticMatchingExpert(torch.nn.Module):
             hidden_dim=config.hidden_dim,
             dropout=config.dropout,
         )
+        self.classifier = torch.nn.Linear(concat_dim, config.num_classes)
 
     @property
     def num_classes(self) -> int:
@@ -92,7 +94,7 @@ class SbertSemanticMatchingExpert(torch.nn.Module):
         gloss_ids: torch.Tensor,
         gloss_mask: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
-        with torch.no_grad():
+        with torch.set_grad_enabled(self.finetune):
             ctx_out = self.encoder(input_ids=context_ids, attention_mask=context_mask)
             gloss_out = self.encoder(input_ids=gloss_ids, attention_mask=gloss_mask)
             ctx_emb = mean_pool(ctx_out.last_hidden_state, context_mask)
@@ -104,6 +106,7 @@ class SbertSemanticMatchingExpert(torch.nn.Module):
             "context_emb": ctx_emb,
             "gloss_emb": gloss_emb,
             "features": features,
+            "class_logits": self.classifier(features),
         }
 
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -125,3 +128,13 @@ class SbertSemanticMatchingExpert(torch.nn.Module):
             batch["gloss_mask"],
         )["ordinal_logits"]
         return coral_expected_value(logits) + 1.0
+
+    def unfreeze_last_layers(self, n_layers: int) -> None:
+        if n_layers <= 0:
+            return
+        layers = getattr(self.encoder, "encoder").layer
+        for layer in layers[-n_layers:]:
+            for param in layer.parameters():
+                param.requires_grad = True
+        self.finetune = True
+        self.encoder.train()

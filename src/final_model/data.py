@@ -79,11 +79,12 @@ def render_text(pieces: Sequence[Tuple[str, str]], separator: str = " [SEP] ") -
 
 
 def ordinal_class(score: float, num_classes: int) -> int:
-    """Map a floating score in [1, num_classes] to a 0-based ordinal class."""
+    """Map a floating score in [1, num_classes] to a 0-based ordinal class using midpoint thresholds."""
     if num_classes < 1:
         raise ValueError("num_classes must be at least 1")
-    rounded = max(1, min(num_classes, int(round(score))))
-    return rounded - 1
+    # Use 0.5 midpoints between classes to avoid banker’s rounding bias.
+    idx = int(max(0, min(num_classes - 1, (score - 0.5) // 1)))
+    return idx
 
 
 class Vocabulary:

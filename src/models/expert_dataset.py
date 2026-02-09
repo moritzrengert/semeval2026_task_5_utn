@@ -63,6 +63,15 @@ class SemevalExpertDataset(Dataset):
         context = build_context(record)
         meaning = str(record.get("judged_meaning", ""))
         hypothesis = build_hypothesis(record)
+        choices = record.get("choices")
+        soft_targets = None
+        if choices and isinstance(choices, (list, tuple)) and len(choices) >= self.num_classes:
+            probs = torch.tensor(choices[: self.num_classes], dtype=torch.float)
+            if probs.sum() > 0:
+                probs = probs / probs.sum()
+            else:
+                probs = torch.full((self.num_classes,), 1.0 / self.num_classes, dtype=torch.float)
+            soft_targets = probs
         return {
             "sample_id": sample_id,
             "context": context,
@@ -71,6 +80,7 @@ class SemevalExpertDataset(Dataset):
             "hypothesis": hypothesis,
             "label": label_tensor,
             "ordinal_label": ordinal_tensor,
+            "soft_targets": soft_targets,
         }
 
     def _filter_records(self, records: Sequence[Dict[str, Any]], label_key: str) -> Sequence[Dict[str, Any]]:

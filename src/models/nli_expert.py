@@ -17,6 +17,7 @@ class NliExpertConfig:
     dropout: float = 0.1
     hidden_dim: int = 512
     max_length: int = 256
+    pooling: str = "cls"  # "cls" or "mean"
 
 
 def make_nli_collate_fn(tokenizer: PreTrainedTokenizerBase, max_length: int):
@@ -54,6 +55,7 @@ class NliPlausibilityExpert(torch.nn.Module):
         self.config = config
         self.tokenizer = AutoTokenizer.from_pretrained(config.model_name)
         self.encoder = AutoModel.from_pretrained(config.model_name)
+        self.finetune = False
         self.encoder.eval()
         for param in self.encoder.parameters():
             param.requires_grad = False
@@ -64,19 +66,26 @@ class NliPlausibilityExpert(torch.nn.Module):
             hidden_dim=config.hidden_dim,
             dropout=config.dropout,
         )
+        self.classifier = torch.nn.Linear(hidden_size, config.num_classes)
 
     @property
     def num_classes(self) -> int:
         return self.config.num_classes
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> Dict[str, torch.Tensor]:
-        with torch.no_grad():
+        with torch.set_grad_enabled(self.finetune):
             outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
-            cls = outputs.last_hidden_state[:, 0, :]
+            if self.config.pooling == "mean":
+                mask = attention_mask.unsqueeze(-1).float()
+                summed = (outputs.last_hidden_state * mask).sum(dim=1)
+                cls = summed / mask.sum(dim=1).clamp(min=1e-6)
+            else:
+                cls = outputs.last_hidden_state[:, 0, :]
         logits = self.head(cls)
         return {
             "ordinal_logits": logits,
             "cls": cls,
+            "class_logits": self.classifier(cls),
         }
 
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -88,3 +97,13 @@ class NliPlausibilityExpert(torch.nn.Module):
     def predict_scores(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         logits = self.forward(batch["input_ids"], batch["attention_mask"])["ordinal_logits"]
         return coral_expected_value(logits) + 1.0
+
+    def unfreeze_last_layers(self, n_layers: int) -> None:
+        if n_layers <= 0:
+            return
+        layers = getattr(self.encoder, "encoder").layer
+        for layer in layers[-n_layers:]:
+            for param in layer.parameters():
+                param.requires_grad = True
+        self.finetune = True
+        self.encoder.train()
