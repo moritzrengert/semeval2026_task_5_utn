@@ -17,6 +17,8 @@ class SbertExpertConfig:
     dropout: float = 0.1
     hidden_dim: int = 512
     max_length: int = 256
+    projector_dim: int = 256
+    use_classifier: bool = True
 
 
 def make_sbert_collate_fn(tokenizer: PreTrainedTokenizerBase, max_length: int):
@@ -75,13 +77,24 @@ class SbertSemanticMatchingExpert(torch.nn.Module):
             param.requires_grad = False
         hidden_size = self.encoder.config.hidden_size
         concat_dim = hidden_size * 2
+        self.projector = None
+        head_input_dim = concat_dim
+        if self.config.projector_dim and self.config.projector_dim > 0:
+            self.projector = torch.nn.Sequential(
+                torch.nn.LayerNorm(concat_dim),
+                torch.nn.Dropout(config.dropout),
+                torch.nn.Linear(concat_dim, config.projector_dim),
+                torch.nn.GELU(),
+                torch.nn.Dropout(config.dropout),
+            )
+            head_input_dim = config.projector_dim
         self.head = CoralHead(
-            concat_dim,
+            head_input_dim,
             num_classes=config.num_classes,
             hidden_dim=config.hidden_dim,
             dropout=config.dropout,
         )
-        self.classifier = torch.nn.Linear(concat_dim, config.num_classes)
+        self.classifier = torch.nn.Linear(head_input_dim, config.num_classes) if self.config.use_classifier else None
 
     @property
     def num_classes(self) -> int:
@@ -100,13 +113,15 @@ class SbertSemanticMatchingExpert(torch.nn.Module):
             ctx_emb = mean_pool(ctx_out.last_hidden_state, context_mask)
             gloss_emb = mean_pool(gloss_out.last_hidden_state, gloss_mask)
         features = torch.cat([ctx_emb, gloss_emb], dim=-1)
+        if self.projector is not None:
+            features = self.projector(features)
         logits = self.head(features)
         return {
             "ordinal_logits": logits,
             "context_emb": ctx_emb,
             "gloss_emb": gloss_emb,
             "features": features,
-            "class_logits": self.classifier(features),
+            "class_logits": self.classifier(features) if self.classifier is not None else None,
         }
 
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:

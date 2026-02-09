@@ -180,6 +180,8 @@ def train(args: argparse.Namespace) -> None:
     epochs_without_improve = 0
     history = []
     ema_state = {k: v.detach().clone() for k, v in model.state_dict().items()} if args.use_ema else None
+    prev_train_loss = None
+    overfit_epochs = 0
 
     for epoch in range(args.epochs):
         model.train()
@@ -257,8 +259,21 @@ def train(args: argparse.Namespace) -> None:
                 if epochs_without_improve >= args.early_stop_patience:
                     print(f"[{expert_name}] Early stopping at epoch {epoch+1} (no improvement in {args.early_stop_patience} epochs).")
                     break
+            # Overfitting detection: train improving while dev worse than best by margin
+            if (
+                prev_train_loss is not None
+                and train_loss_epoch < prev_train_loss - args.overfit_train_delta
+                and metrics["loss"] > best_dev_loss + args.overfit_dev_delta
+            ):
+                overfit_epochs += 1
+                if overfit_epochs >= args.overfit_patience:
+                    print(f"[{expert_name}] Stopping early due to overfitting detected ({overfit_epochs} epochs).")
+                    break
+            else:
+                overfit_epochs = 0
         else:
             history.append((epoch + 1, train_loss_epoch, None))
+        prev_train_loss = train_loss_epoch
 
     # Save final weights if not already saved best
     if args.save_path and not dev_loader:
@@ -291,28 +306,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dev-path", type=str, default="semeval26-05-scripts/data/dev.json")
     parser.add_argument("--label-key", type=str, default="average")
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate for heads.")
-    parser.add_argument("--encoder-lr", type=float, default=3e-5, help="Learning rate for unfrozen encoder layers.")
-    parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--hidden-dim", type=int, default=512)
+    parser.add_argument("--epochs", type=int, default=12)
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for heads.")
+    parser.add_argument("--encoder-lr", type=float, default=0.0, help="Learning rate for unfrozen encoder layers.")
+    parser.add_argument("--weight-decay", type=float, default=0.05)
+    parser.add_argument("--dropout", type=float, default=0.2)
+    parser.add_argument("--hidden-dim", type=int, default=256)
     parser.add_argument("--max-length", type=int, default=256)
     parser.add_argument("--num-classes", type=int, default=5)
     parser.add_argument("--model-name", type=str, default=None, help="HF model to use for the chosen expert.")
     parser.add_argument("--pooling", choices=["cls", "mean"], default="cls", help="Pooling for NLI expert.")
     parser.add_argument("--coral-weight", type=float, default=1.0)
-    parser.add_argument("--mse-weight", type=float, default=0.3)
+    parser.add_argument("--mse-weight", type=float, default=0.0)
     parser.add_argument("--warmup-ratio", type=float, default=0.06)
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--train-encoder-layers", type=int, default=0, help="Unfreeze last N transformer layers; 0 keeps encoder frozen.")
     parser.add_argument("--early-stop-patience", type=int, default=3)
     parser.add_argument("--early-stop-delta", type=float, default=0.0)
+    parser.add_argument("--overfit-patience", type=int, default=2, help="Stop if train improves but dev worsens for this many epochs.")
+    parser.add_argument("--overfit-train-delta", type=float, default=0.01, help="Minimum train loss drop to count as improvement.")
+    parser.add_argument("--overfit-dev-delta", type=float, default=0.0, help="Dev loss must exceed best by this margin to signal overfit.")
     parser.add_argument("--plot-path", type=str, default="training_curve.png")
     parser.add_argument("--no-plot", action="store_true", help="Disable saving loss plot.")
     parser.add_argument("--use-ema", action="store_true", help="Use EMA weights for eval.")
     parser.add_argument("--ema-decay", type=float, default=0.999)
-    parser.add_argument("--soft-weight", type=float, default=0.5, help="Weight for soft-label KL loss; 0 disables.")
+    parser.add_argument("--soft-weight", type=float, default=0.0, help="Weight for soft-label KL loss; 0 disables.")
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--log-every", type=int, default=20)
     parser.add_argument("--save-path", type=str, default=None)

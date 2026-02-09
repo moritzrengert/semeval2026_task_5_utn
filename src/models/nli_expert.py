@@ -18,6 +18,8 @@ class NliExpertConfig:
     hidden_dim: int = 512
     max_length: int = 256
     pooling: str = "cls"  # "cls" or "mean"
+    projector_dim: int = 256
+    use_classifier: bool = True
 
 
 def make_nli_collate_fn(tokenizer: PreTrainedTokenizerBase, max_length: int):
@@ -60,13 +62,24 @@ class NliPlausibilityExpert(torch.nn.Module):
         for param in self.encoder.parameters():
             param.requires_grad = False
         hidden_size = self.encoder.config.hidden_size
+        self.projector = None
+        head_input_dim = hidden_size
+        if self.config.projector_dim and self.config.projector_dim > 0:
+            self.projector = torch.nn.Sequential(
+                torch.nn.LayerNorm(hidden_size),
+                torch.nn.Dropout(config.dropout),
+                torch.nn.Linear(hidden_size, config.projector_dim),
+                torch.nn.GELU(),
+                torch.nn.Dropout(config.dropout),
+            )
+            head_input_dim = config.projector_dim
         self.head = CoralHead(
-            hidden_size,
+            head_input_dim,
             num_classes=config.num_classes,
             hidden_dim=config.hidden_dim,
             dropout=config.dropout,
         )
-        self.classifier = torch.nn.Linear(hidden_size, config.num_classes)
+        self.classifier = torch.nn.Linear(head_input_dim, config.num_classes) if self.config.use_classifier else None
 
     @property
     def num_classes(self) -> int:
@@ -81,11 +94,13 @@ class NliPlausibilityExpert(torch.nn.Module):
                 cls = summed / mask.sum(dim=1).clamp(min=1e-6)
             else:
                 cls = outputs.last_hidden_state[:, 0, :]
+        if self.projector is not None:
+            cls = self.projector(cls)
         logits = self.head(cls)
         return {
             "ordinal_logits": logits,
             "cls": cls,
-            "class_logits": self.classifier(cls),
+            "class_logits": self.classifier(cls) if self.classifier is not None else None,
         }
 
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
