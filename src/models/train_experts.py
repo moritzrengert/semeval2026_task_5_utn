@@ -14,10 +14,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from final_model.losses import coral_expected_value, coral_loss
+from scipy.stats import spearmanr
 from models.nli_expert import NliExpertConfig, NliPlausibilityExpert
 from models.sbert_expert import SbertExpertConfig, SbertSemanticMatchingExpert
 from models.collate import make_nli_collate_fn, make_sbert_collate_fn
-from models.expert_dataset import load_expert_dataset
+from models.expert_dataset import load_expert_dataset, SemevalExpertDataset
+from final_model.data import expand_annotator_samples, load_dataset
 
 
 def move_to_device(batch: Dict[str, Any], device: torch.device) -> Dict[str, Any]:
@@ -46,7 +48,7 @@ def build_expert(
             pooling=args.pooling,
         )
         model = NliPlausibilityExpert(config)
-        collate = make_nli_collate_fn(model.tokenizer, max_length=config.max_length)
+        collate = make_nli_collate_fn(model.tokenizer, max_length=config.max_length, num_classes=config.num_classes)
         head = "nli"
     elif args.expert == "sbert":
         config = SbertExpertConfig(
@@ -57,7 +59,7 @@ def build_expert(
             max_length=args.max_length,
         )
         model = SbertSemanticMatchingExpert(config)
-        collate = make_sbert_collate_fn(model.tokenizer, max_length=config.max_length)
+        collate = make_sbert_collate_fn(model.tokenizer, max_length=config.max_length, num_classes=config.num_classes)
         head = "sbert"
     else:
         raise ValueError(f"Unknown expert type '{args.expert}'")
@@ -84,6 +86,10 @@ def evaluate(
     acc_sum = 0.0
     coral_sum = 0.0
     kl_sum = 0.0
+    preds_all = []
+    labels_all = []
+    within_sd_correct = 0
+    within_sd_total = 0
     for batch in loader:
         batch = move_to_device(batch, device)
         if hasattr(model, "forward") and "context_ids" in batch:
@@ -126,8 +132,27 @@ def evaluate(
         loss_sum += total_loss.item() * batch["scores"].size(0)
         acc_sum += (class_pred == batch["ordinal_labels"]).sum().item()
         total += batch["scores"].size(0)
+        preds_all.append(preds.detach().cpu())
+        labels_all.append(batch["scores"].detach().cpu())
+        # within SD metric
+        choices = batch.get("choices")
+        choices_mask = batch.get("choices_mask")
+        if choices is not None and choices_mask is not None:
+            for i in range(choices.size(0)):
+                if choices_mask[i].any():
+                    vals = choices[i][choices_mask[i]].float()
+                    mean = vals.mean().item()
+                    sd = vals.std(unbiased=False).item()
+                    within = (mean - sd) < preds[i].item() < (mean + sd)
+                    within = within or abs(mean - preds[i].item()) < 1.0
+                    within_sd_correct += 1 if within else 0
+                    within_sd_total += 1
     if total == 0:
-        return {"loss": 0.0, "mse": 0.0, "mae": 0.0, "acc": 0.0, "coral": 0.0, "kl": 0.0}
+        return {"loss": 0.0, "mse": 0.0, "mae": 0.0, "acc": 0.0, "coral": 0.0, "kl": 0.0, "spearman": 0.0, "acc_within_sd": 0.0}
+    preds_all = torch.cat(preds_all).numpy()
+    labels_all = torch.cat(labels_all).numpy()
+    spearman = spearmanr(preds_all, labels_all).correlation if len(preds_all) > 1 else 0.0
+    acc_within_sd = within_sd_correct / within_sd_total if within_sd_total else 0.0
     return {
         "loss": loss_sum / total,
         "mse": mse_sum / total,
@@ -135,6 +160,8 @@ def evaluate(
         "acc": acc_sum / total,
         "coral": coral_sum / total,
         "kl": kl_sum / total if total else 0.0,
+        "spearman": spearman,
+        "acc_within_sd": acc_within_sd,
     }
 
 
@@ -147,8 +174,15 @@ def train(args: argparse.Namespace) -> None:
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
-    train_ds = load_expert_dataset(args.train_path, num_classes=args.num_classes, label_key=args.label_key)
-    dev_ds = load_expert_dataset(args.dev_path, num_classes=args.num_classes, label_key=args.label_key) if args.dev_path else None
+    train_records = load_dataset(args.train_path)
+    dev_records = load_dataset(args.dev_path) if args.dev_path else []
+    if args.expand_annotators:
+        train_records = expand_annotator_samples(train_records, label_key=args.label_key, choices_key="choices")
+        if dev_records:
+            dev_records = expand_annotator_samples(dev_records, label_key=args.label_key, choices_key="choices")
+
+    train_ds = SemevalExpertDataset(train_records, num_classes=args.num_classes, label_key=args.label_key)
+    dev_ds = SemevalExpertDataset(dev_records, num_classes=args.num_classes, label_key=args.label_key) if dev_records else None
 
     model, collate_fn, expert_name = build_expert(args)
 
@@ -240,7 +274,7 @@ def train(args: argparse.Namespace) -> None:
                 soft_weight=args.soft_weight,
             )
             print(
-                f"[{expert_name}] dev epoch {epoch+1}: composite={metrics['loss']:.4f}, coral={metrics['coral']:.4f}, mse={metrics['mse']:.4f}, kl={metrics['kl']:.4f}, mae={metrics['mae']:.4f}, acc={metrics['acc']:.4f}"
+                f"[{expert_name}] dev epoch {epoch+1}: composite={metrics['loss']:.4f}, coral={metrics['coral']:.4f}, mse={metrics['mse']:.4f}, kl={metrics['kl']:.4f}, mae={metrics['mae']:.4f}, acc={metrics['acc']:.4f}, spearman={metrics['spearman']:.4f}, acc_sd={metrics['acc_within_sd']:.4f}"
             )
             if backup_state is not None:
                 model.load_state_dict(backup_state, strict=False)
@@ -331,6 +365,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use-ema", action="store_true", help="Use EMA weights for eval.")
     parser.add_argument("--ema-decay", type=float, default=0.999)
     parser.add_argument("--soft-weight", type=float, default=0.0, help="Weight for soft-label KL loss; 0 disables.")
+    parser.add_argument("--expand-annotators", action="store_true", help="Use each annotator score as its own training sample.")
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--log-every", type=int, default=20)
     parser.add_argument("--save-path", type=str, default=None)

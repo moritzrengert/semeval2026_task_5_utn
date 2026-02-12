@@ -65,6 +65,7 @@ class SemevalExpertDataset(Dataset):
         hypothesis = build_hypothesis(record)
         choices = record.get("choices")
         soft_targets = None
+        choices_tensor = None
         if choices and isinstance(choices, (list, tuple)) and len(choices) >= self.num_classes:
             probs = torch.tensor(choices[: self.num_classes], dtype=torch.float)
             if probs.sum() > 0:
@@ -72,6 +73,7 @@ class SemevalExpertDataset(Dataset):
             else:
                 probs = torch.full((self.num_classes,), 1.0 / self.num_classes, dtype=torch.float)
             soft_targets = probs
+            choices_tensor = torch.tensor(choices[: self.num_classes], dtype=torch.float)
         return {
             "sample_id": sample_id,
             "context": context,
@@ -81,6 +83,7 @@ class SemevalExpertDataset(Dataset):
             "label": label_tensor,
             "ordinal_label": ordinal_tensor,
             "soft_targets": soft_targets,
+            "choices": choices_tensor,
         }
 
     def _filter_records(self, records: Sequence[Dict[str, Any]], label_key: str) -> Sequence[Dict[str, Any]]:
@@ -100,6 +103,16 @@ class SemevalExpertDataset(Dataset):
         return filtered
 
 
-def load_expert_dataset(path: str | None, num_classes: int = 5, label_key: str = "average") -> SemevalExpertDataset:
+def load_expert_dataset(
+    path: str | None,
+    num_classes: int = 5,
+    label_key: str = "average",
+    expand_annotators: bool = False,
+    include_average: bool = False,
+) -> SemevalExpertDataset:
+    from final_model.data import expand_annotator_samples
+
     records = load_dataset(path) if path else []
+    if expand_annotators:
+        records = expand_annotator_samples(records, label_key=label_key, include_average=include_average)
     return SemevalExpertDataset(records, num_classes=num_classes, label_key=label_key)
