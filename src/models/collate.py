@@ -7,7 +7,7 @@ from transformers import PreTrainedTokenizerBase
 
 
 def make_nli_collate_fn(
-    tokenizer: PreTrainedTokenizerBase, max_length: int
+    tokenizer: PreTrainedTokenizerBase, max_length: int, num_classes: int
 ):
     """Tokenize premise/hypothesis pairs for the NLI expert."""
 
@@ -25,13 +25,19 @@ def make_nli_collate_fn(
         labels = torch.stack([sample["ordinal_label"] for sample in batch], dim=0)
         scores = torch.stack([sample["label"] for sample in batch], dim=0)
         softs = [sample.get("soft_targets") for sample in batch]
-        max_classes = max((s.numel() for s in softs if s is not None), default=5)
-        soft_targets = torch.zeros((len(batch), max_classes), dtype=torch.float)
+        soft_targets = torch.zeros((len(batch), num_classes), dtype=torch.float)
         soft_mask = torch.zeros((len(batch),), dtype=torch.bool)
         for i, s in enumerate(softs):
             if s is not None:
                 soft_targets[i, : s.numel()] = s
                 soft_mask[i] = True
+        choices = torch.full((len(batch), num_classes), float("nan"))
+        choices_mask = torch.zeros((len(batch), num_classes), dtype=torch.bool)
+        for i, sample in enumerate(batch):
+            ch = sample.get("choices")
+            if ch is not None:
+                choices[i, : ch.numel()] = ch
+                choices_mask[i, : ch.numel()] = True
         return {
             "input_ids": enc["input_ids"],
             "attention_mask": enc["attention_mask"],
@@ -39,6 +45,8 @@ def make_nli_collate_fn(
             "scores": scores,
             "soft_targets": soft_targets,
             "soft_mask": soft_mask,
+            "choices": choices,
+            "choices_mask": choices_mask,
             "sample_ids": [sample["sample_id"] for sample in batch],
         }
 
@@ -46,7 +54,7 @@ def make_nli_collate_fn(
 
 
 def make_sbert_collate_fn(
-    tokenizer: PreTrainedTokenizerBase, max_length: int
+    tokenizer: PreTrainedTokenizerBase, max_length: int, num_classes: int
 ):
     """Tokenize context/definition pairs for the SBERT expert."""
 
@@ -62,13 +70,19 @@ def make_sbert_collate_fn(
         labels = torch.stack([sample["ordinal_label"] for sample in batch], dim=0)
         scores = torch.stack([sample["label"] for sample in batch], dim=0)
         softs = [sample.get("soft_targets") for sample in batch]
-        max_classes = max((s.numel() for s in softs if s is not None), default=5)
-        soft_targets = torch.zeros((len(batch), max_classes), dtype=torch.float)
+        soft_targets = torch.zeros((len(batch), num_classes), dtype=torch.float)
         soft_mask = torch.zeros((len(batch),), dtype=torch.bool)
         for i, s in enumerate(softs):
             if s is not None:
                 soft_targets[i, : s.numel()] = s
                 soft_mask[i] = True
+        choices = torch.full((len(batch), num_classes), float("nan"))
+        choices_mask = torch.zeros((len(batch), num_classes), dtype=torch.bool)
+        for i, sample in enumerate(batch):
+            ch = sample.get("choices")
+            if ch is not None:
+                choices[i, : ch.numel()] = ch
+                choices_mask[i, : ch.numel()] = True
         return {
             "context_ids": ctx_enc["input_ids"],
             "context_mask": ctx_enc["attention_mask"],
@@ -78,6 +92,8 @@ def make_sbert_collate_fn(
             "scores": scores,
             "soft_targets": soft_targets,
             "soft_mask": soft_mask,
+            "choices": choices,
+            "choices_mask": choices_mask,
             "sample_ids": [sample["sample_id"] for sample in batch],
         }
 

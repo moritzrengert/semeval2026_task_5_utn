@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from scipy.stats import spearmanr
 import torch
 from torch.utils.data import DataLoader
 
@@ -16,6 +17,7 @@ from .data import (
     Vocabulary,
     build_collate_fn,
     build_text_features,
+    expand_annotator_samples,
     load_dataset,
     render_text,
 )
@@ -141,7 +143,10 @@ def evaluate(
     mse_sum = 0.0
     mae_sum = 0.0
     acc_count = 0
+    acc_sd_count = 0
     total = 0
+    spearman_preds: List[float] = []
+    spearman_golds: List[float] = []
     with torch.no_grad():
         for batch in loader:
             batch = move_to_device(batch, device)
@@ -158,11 +163,29 @@ def evaluate(
             class_logits = outputs.get("class_logits")
             if class_logits is not None:
                 acc_count += (class_logits.argmax(dim=-1) == batch["ordinal_labels"]).sum().item()
+            if batch.get("choices") is not None:
+                choices = batch["choices"].float()
+                means = choices.mean(dim=1)
+                stds = choices.std(dim=1, unbiased=True)
+                preds_flat = pred_reg.view(-1)
+                within = ((preds_flat > (means - stds)) & (preds_flat < (means + stds))) | (
+                    (preds_flat - means).abs() < 1.0
+                )
+                acc_sd_count += within.sum().item()
+            spearman_preds.extend(pred_reg.view(-1).tolist())
+            spearman_golds.extend(batch["labels"].view(-1).tolist())
             total += batch["labels"].size(0)
+    spearman_corr, _ = spearmanr(spearman_preds, spearman_golds) if total > 1 else (0.0, None)
+    spearman_distance = 1 - spearman_corr
+    acc_sd = acc_sd_count / total if batch.get("choices") is not None and total else 0.0
     return {
         "mse": mse_sum / total if total else 0.0,
         "mae": mae_sum / total if total else 0.0,
         "acc": acc_count / total if total else 0.0,
+        "spearman": float(spearman_corr),
+        "spearman_distance": float(spearman_distance),
+        "acc_within_sd": acc_sd,
+        "combined": (float(spearman_corr) + acc_sd) / 2 if total else 0.0,
     }
 
 
@@ -170,6 +193,11 @@ def train(args: argparse.Namespace) -> None:
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     train_records = load_dataset(args.train_path)
     dev_records = load_dataset(args.dev_path) if args.dev_path else []
+
+    if args.expand_annotators:
+        train_records = expand_annotator_samples(train_records, label_key="average", choices_key="choices")
+        if dev_records:
+            dev_records = expand_annotator_samples(dev_records, label_key="average", choices_key="choices")
 
     adapter_specs = [AdapterSpec.parse(text) for text in args.adapter]
     adapters = load_adapters(adapter_specs) if adapter_specs else []
@@ -241,7 +269,21 @@ def train(args: argparse.Namespace) -> None:
                 print(f"epoch {epoch+1} step {step}: {loss_str}")
         if dev_loader:
             metrics = evaluate(model, dev_loader, device)
-            print(f"[dev] epoch {epoch+1}: mse={metrics['mse']:.4f}, mae={metrics['mae']:.4f}, acc={metrics['acc']:.4f}")
+            print(
+                "[dev] epoch {epoch}: "
+                "mse={mse:.4f}, mae={mae:.4f}, acc={acc:.4f}, "
+                "spearman={spearman:.4f}, spearman_dist={sdist:.4f}, "
+                "acc_sd={accsd:.4f}, combined={combined:.4f}".format(
+                    epoch=epoch + 1,
+                    mse=metrics["mse"],
+                    mae=metrics["mae"],
+                    acc=metrics["acc"],
+                    spearman=metrics["spearman"],
+                    sdist=metrics["spearman_distance"],
+                    accsd=metrics["acc_within_sd"],
+                    combined=metrics["combined"],
+                )
+            )
 
 
 def parse_args() -> argparse.Namespace:
@@ -268,6 +310,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--disable-dense-base", action="store_true", help="Drop dense base outputs for ablations.")
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--log-every", type=int, default=20)
+    parser.add_argument(
+        "--expand-annotators",
+        action="store_true",
+        help="Use each annotator score as an individual training sample (duplicates text, swaps label).",
+    )
     return parser.parse_args()
 
 

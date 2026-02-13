@@ -14,6 +14,7 @@ __all__ = [
     "Tokenizer",
     "simple_tokenizer",
     "load_dataset",
+    "expand_annotator_samples",
     "build_text_features",
     "render_text",
     "ordinal_class",
@@ -39,6 +40,39 @@ def load_dataset(path: Union[str, Path]) -> List[Dict[str, Any]]:
     if isinstance(payload, list):
         return payload
     raise ValueError(f"Unsupported dataset format at {path}")
+
+
+def expand_annotator_samples(
+    records: Sequence[Dict[str, Any]],
+    label_key: str = "average",
+    choices_key: str = "choices",
+    include_average: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Optional helper to treat each annotator score as a separate training example.
+
+    Args:
+        records: Base dataset records.
+        label_key: Field name the model reads as the gold label (default: "average").
+                   Each expanded record will receive the annotator score under this key.
+        choices_key: Field containing the list of annotator scores (default: "choices").
+        include_average: If True, keep an extra sample with the original aggregate label as well.
+    """
+    expanded: List[Dict[str, Any]] = []
+    for record in records:
+        choices = record.get(choices_key)
+        if isinstance(choices, (list, tuple)) and choices:
+            for annot_idx, choice in enumerate(choices):
+                new_record = dict(record)
+                new_record[label_key] = choice
+                # Track which annotator produced this label (useful for debugging/analysis).
+                new_record["annotator_index"] = annot_idx
+                expanded.append(new_record)
+            if include_average and label_key in record:
+                expanded.append(dict(record))
+        else:
+            expanded.append(record)
+    return expanded
 
 
 def build_text_features(
@@ -147,6 +181,7 @@ class EnsembleSample:
     label: torch.Tensor
     ordinal_label: torch.Tensor
     sample_id: str
+    choices: Optional[torch.Tensor] = None
 
 
 class EnsembleDataset(Dataset):
@@ -220,6 +255,9 @@ class EnsembleDataset(Dataset):
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Label '{self.label_key}' for sample {sample_id} must be numeric") from exc
         dense_features = self._collect_dense_features(sample_id)
+        choices_tensor = None
+        if "choices" in record and isinstance(record["choices"], (list, tuple)):
+            choices_tensor = torch.tensor(record["choices"], dtype=torch.float)
         return EnsembleSample(
             input_ids=token_ids,
             length=len(token_ids),
@@ -227,6 +265,7 @@ class EnsembleDataset(Dataset):
             label=torch.tensor(label_value, dtype=torch.float),
             ordinal_label=torch.tensor(ordinal_class(label_value, self.num_classes), dtype=torch.long),
             sample_id=sample_id,
+            choices=choices_tensor,
         )
 
 
@@ -259,6 +298,22 @@ def build_collate_fn(
         labels = torch.stack([sample.label for sample in batch], dim=0)
         ordinal_labels = torch.stack([sample.ordinal_label for sample in batch], dim=0)
         sample_ids = [sample.sample_id for sample in batch]
+        choices_tensor = None
+        if batch and batch[0].choices is not None:
+            # Pad choices in case of variable length, though SemEval data uses fixed length 5.
+            max_choices = max(sample.choices.numel() for sample in batch if sample.choices is not None)
+            padded = []
+            for sample in batch:
+                if sample.choices is None:
+                    padded.append(torch.zeros(max_choices, dtype=torch.float))
+                else:
+                    c = sample.choices
+                    if c.numel() < max_choices:
+                        pad = torch.zeros(max_choices, dtype=torch.float)
+                        pad[: c.numel()] = c
+                        c = pad
+                    padded.append(c)
+            choices_tensor = torch.stack(padded, dim=0)
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
@@ -266,6 +321,7 @@ def build_collate_fn(
             "labels": labels,
             "ordinal_labels": ordinal_labels,
             "sample_ids": sample_ids,
+            "choices": choices_tensor,
         }
 
     return collate
