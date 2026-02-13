@@ -123,7 +123,7 @@ def main():
     parser.add_argument("--max-trials", type=int, default=32, help="Max trials per expert (random subset of grid).")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out-dir", type=Path, default=Path("runs/sweep"))
-    parser.add_argument("--python", type=str, default=".venv/bin/python3")
+    parser.add_argument("--python", type=str, default="python")
     parser.add_argument("--pythonpath", type=str, default="src")
     parser.add_argument("--model-name", type=str, default="sentence-transformers/all-mpnet-base-v2")
     parser.add_argument("--nli-model-name", type=str, default="roberta-large-mnli")
