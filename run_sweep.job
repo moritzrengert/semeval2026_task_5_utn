@@ -1,0 +1,51 @@
+#!/bin/bash -l
+
+#SBATCH --job-name=semeval_sweep
+#SBATCH --output=slurm_logs/job_%j_experiment_grid.out
+#SBATCH --error=slurm_logs/job_%j_experiment_grid.err
+#SBATCH --time=10:00:00
+#SBATCH --partition=a40
+#SBATCH --gres=gpu:a40:1
+#SBATCH --cpus-per-task=16
+#SBATCH --export=NONE
+
+#SBATCH --mail-user=moritz.rengert@utn.de  # Email for notifications
+#SBATCH --mail-type=BEGIN,END,FAIL          # When to receive emails (job start, end, or failure)
+
+set -euo pipefail
+
+module purge
+module load python
+conda activate lit
+
+# --- Optional proxy (matches prior jobs) ---
+export http_proxy=${http_proxy:-http://proxy.nhr.fau.de:80}
+export https_proxy=${https_proxy:-http://proxy.nhr.fau.de:80}
+export HTTP_PROXY=$http_proxy
+export HTTPS_PROXY=$https_proxy
+export NO_PROXY=${NO_PROXY:-127.0.0.1,localhost,.cluster.local}
+
+# --- Hugging Face cache on scratch ---
+unset TRANSFORMERS_CACHE
+export HF_HOME=/scratch/$USER/hf_home
+export HF_DATASETS_CACHE=/scratch/$USER/hf_datasets
+export HF_HUB_ENABLE_HF_TRANSFER=1
+export HF_HUB_TIMEOUT=20
+mkdir -p "$HF_HOME" "$HF_DATASETS_CACHE"
+
+# --- NCCL/torchrun defaults for Slurm single-node multi-GPU ---
+export NCCL_DEBUG=${NCCL_DEBUG:-warn}
+export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-0}
+export NCCL_NET_GDR_LEVEL=${NCCL_NET_GDR_LEVEL:-2}
+export NCCL_ASYNC_ERROR_HANDLING=${NCCL_ASYNC_ERROR_HANDLING:-1}
+# Torch will pin one CPU thread per dataloader worker; cap intra-op threads.
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
+
+# Run from the directory the job was submitted in (this repo).
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
+export PYTHONPATH="$PWD/src:${PYTHONPATH-}"
+
+# --- Run experiment (multi-GPU via torchrun; per-GPU batch_size is set in code) ---
+NPERNODE="${SLURM_GPUS_PER_NODE:-${SLURM_GPUS_ON_NODE:-2}}"
+
+python scripts/sweep.py
