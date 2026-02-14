@@ -1,0 +1,424 @@
+#!/bin/bash -l
+
+#SBATCH --job-name=semeval_ens_sweep
+#SBATCH --output=slurm_logs/job_%j_ensemble_sweep.out
+#SBATCH --error=slurm_logs/job_%j_ensemble_sweep.err
+#SBATCH --time=04:00:00
+#SBATCH --partition=a40
+#SBATCH --gres=gpu:a40:1
+#SBATCH --cpus-per-task=8
+#SBATCH --export=NONE
+
+#SBATCH --mail-user=moritz.rengert@utn.de
+#SBATCH --mail-type=BEGIN,END,FAIL
+
+set -euo pipefail
+
+module purge
+module load python
+conda activate lit
+
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
+mkdir -p slurm_logs predictions
+
+python3 - <<'PY'
+import itertools
+import json
+import math
+import shutil
+import subprocess
+from pathlib import Path
+
+import numpy as np
+
+try:
+    from scipy.stats import spearmanr
+except Exception:
+    spearmanr = None
+
+try:
+    import torch  # noqa: F401
+except Exception as exc:
+    raise SystemExit(f"Torch is required for MLP sweep runs: {exc}")
+
+
+ROOT = Path.cwd()
+PRED_DIR = ROOT / "predictions"
+SWEEP_DIR = PRED_DIR / "ensemble_sweep_runs"
+SWEEP_DIR.mkdir(parents=True, exist_ok=True)
+
+DEV_LABELS = ROOT / "semeval26-05-scripts" / "data" / "dev.json"
+TEST_LABELS = ROOT / "semeval26-05-scripts" / "data" / "test.json"
+
+DEV_PREDS = [
+    "predictions/dev_preds_ares.json",
+    "predictions/dev_preds_lmms.json",
+    "predictions/dev_preds_nli.json",
+    "predictions/dev_preds_sbert.json",
+    "predictions/dev_preds_sensembert.json",
+    "predictions/dev_preds_stsbert.json",
+]
+TEST_PREDS = [
+    "predictions/test_preds_ares.json",
+    "predictions/test_preds_lmms.json",
+    "predictions/test_preds_nli.json",
+    "predictions/test_preds_sbert.json",
+    "predictions/test_preds_sensembert.json",
+    "predictions/test_preds_stsbert.json",
+]
+
+
+def numeric_sort_keys(keys):
+    try:
+        return sorted(keys, key=lambda k: int(k))
+    except Exception:
+        return sorted(keys)
+
+
+def load_records(path: Path):
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, dict):
+        return [payload[k] for k in numeric_sort_keys(list(payload.keys()))]
+    if isinstance(payload, list):
+        return payload
+    raise ValueError(f"Unsupported JSON structure in {path}")
+
+
+def load_prediction_file(path: Path) -> np.ndarray:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, dict):
+        keys = numeric_sort_keys(list(payload.keys()))
+        return np.array([float(payload[k]) for k in keys], dtype=np.float64)
+    if isinstance(payload, list):
+        out = []
+        for item in payload:
+            if isinstance(item, dict):
+                out.append(float(item["prediction"]))
+            else:
+                out.append(float(item))
+        return np.array(out, dtype=np.float64)
+    raise ValueError(f"Unsupported prediction format in {path}")
+
+
+def to_float_or_nan(value):
+    try:
+        return float(value)
+    except Exception:
+        return float("nan")
+
+
+def load_labels_and_choices(path: Path):
+    records = load_records(path)
+    labels = []
+    choices = []
+    for rec in records:
+        if isinstance(rec, dict):
+            labels.append(to_float_or_nan(rec.get("average")))
+            raw = rec.get("choices")
+            if isinstance(raw, (list, tuple)) and len(raw) > 0:
+                vals = []
+                for x in raw:
+                    fx = to_float_or_nan(x)
+                    if math.isfinite(fx):
+                        vals.append(float(fx))
+                choices.append(np.array(vals, dtype=np.float64) if vals else None)
+            else:
+                choices.append(None)
+        else:
+            labels.append(float("nan"))
+            choices.append(None)
+    return np.array(labels, dtype=np.float64), choices
+
+
+def safe_spearman(preds: np.ndarray, labels: np.ndarray) -> float:
+    if preds.shape[0] < 2:
+        return 0.0
+    if spearmanr is not None:
+        corr = spearmanr(preds, labels).correlation
+        return 0.0 if corr is None or np.isnan(corr) else float(corr)
+    rp = np.argsort(np.argsort(preds))
+    rl = np.argsort(np.argsort(labels))
+    corr = np.corrcoef(rp, rl)[0, 1]
+    return 0.0 if np.isnan(corr) else float(corr)
+
+
+def acc_within_sd(preds: np.ndarray, choices):
+    total = 0
+    correct = 0
+    for pred, item in zip(preds.tolist(), choices):
+        if item is None or item.size == 0:
+            continue
+        mean = float(np.mean(item))
+        sd = float(np.std(item, ddof=1)) if item.size > 1 else 0.0
+        within = ((mean - sd) < pred < (mean + sd)) or (abs(mean - pred) < 1.0)
+        correct += 1 if within else 0
+        total += 1
+    if total == 0:
+        return 0.0
+    return float(correct / total)
+
+
+def score_predictions(pred_path: Path, labels: np.ndarray, choices):
+    preds = load_prediction_file(pred_path)
+    if preds.shape[0] != labels.shape[0]:
+        raise ValueError(f"Length mismatch for {pred_path}: preds={preds.shape[0]} labels={labels.shape[0]}")
+    mask = np.isfinite(labels)
+    p = preds[mask]
+    y = labels[mask]
+    filtered_choices = [c for c, keep in zip(choices, mask.tolist()) if keep]
+    mse = float(np.mean((p - y) ** 2))
+    mae = float(np.mean(np.abs(p - y)))
+    spearman = safe_spearman(p, y)
+    p_cls = np.clip(np.floor(p - 0.5), 0, 4)
+    y_cls = np.clip(np.floor(y - 0.5), 0, 4)
+    accuracy = float(np.mean(p_cls == y_cls))
+    acc_sd = acc_within_sd(p, filtered_choices)
+    return {
+        "n": int(mask.sum()),
+        "mse": mse,
+        "mae": mae,
+        "spearman": spearman,
+        "accuracy": accuracy,
+        "acc_within_sd": acc_sd,
+    }
+
+
+def is_better(candidate, best):
+    if best is None:
+        return True
+    eps = 1e-12
+    cs = candidate["metrics"]["spearman"]
+    bs = best["metrics"]["spearman"]
+    if cs > bs + eps:
+        return True
+    if abs(cs - bs) <= eps:
+        ca = candidate["metrics"]["acc_within_sd"]
+        ba = best["metrics"]["acc_within_sd"]
+        if ca > ba + eps:
+            return True
+        if abs(ca - ba) <= eps:
+            cm = candidate["metrics"]["mse"]
+            bm = best["metrics"]["mse"]
+            if cm < bm - eps:
+                return True
+    return False
+
+
+def run_ensemble(mode: str, params: dict, run_name: str, extra_args=None):
+    out_dev = SWEEP_DIR / f"dev_{run_name}.json"
+    out_test = SWEEP_DIR / f"test_{run_name}.json"
+    meta_path = SWEEP_DIR / f"meta_{run_name}.json"
+
+    cmd = [
+        "python3",
+        "scripts/ensemble_two.py",
+        "--dev-preds",
+        *DEV_PREDS,
+        "--test-preds",
+        *TEST_PREDS,
+        "--combine",
+        mode,
+    ]
+
+    for key, value in params.items():
+        cmd.extend([f"--{key}", str(value)])
+
+    cmd.extend(
+        [
+            "--out-dev",
+            str(out_dev),
+            "--out-test",
+            str(out_test),
+            "--save-meta",
+            str(meta_path),
+            "--show-split-metrics",
+        ]
+    )
+    if extra_args:
+        cmd.extend(extra_args)
+
+    subprocess.run(cmd, check=True)
+    return out_dev, out_test, meta_path
+
+
+def run_best_with_contributions(mode: str, best_record: dict):
+    run_name = f"{mode}_best_contrib"
+    params = dict(best_record["params"])
+    contrib_path = SWEEP_DIR / f"contrib_{mode}_best.json"
+    extra_args = [
+        "--show-contributions",
+        "--save-contributions",
+        str(contrib_path),
+        "--contrib-split",
+        "test",
+    ]
+    if mode == "mlp":
+        extra_args.extend(["--mlp-contrib-baseline", "mean"])
+
+    out_dev, out_test, meta_path = run_ensemble(mode, params, run_name, extra_args=extra_args)
+    metrics = score_predictions(out_test, y_test, choices_test)
+    contrib_payload = json.loads(contrib_path.read_text(encoding="utf-8"))
+    return {
+        "mode": mode,
+        "params": params,
+        "metrics": metrics,
+        "out_dev": str(out_dev),
+        "out_test": str(out_test),
+        "meta": str(meta_path),
+        "contrib_path": str(contrib_path),
+        "contrib": contrib_payload,
+    }
+
+
+y_test, choices_test = load_labels_and_choices(TEST_LABELS)
+if not np.any(np.isfinite(y_test)):
+    raise SystemExit(f"No numeric test labels found in {TEST_LABELS}")
+
+weighted_grid = list(
+    itertools.product(
+        [1200, 1800],   # weight_epochs
+        [0.03, 0.05],   # weight_lr
+        [0.0, 1e-4, 1e-3],  # weight_l2
+    )
+)
+
+mlp_grid = list(
+    itertools.product(
+        [16, 32],          # mlp_hidden_dim
+        [0.0, 0.1],        # mlp_dropout
+        [5e-4, 1e-3],      # mlp_lr
+        [1e-4, 1e-3],      # mlp_weight_decay
+    )
+)
+
+results = {"weighted": [], "mlp": []}
+best_weighted = None
+best_mlp = None
+
+print(f"[sweep] weighted candidates: {len(weighted_grid)}")
+for i, (epochs, lr, l2) in enumerate(weighted_grid, start=1):
+    params = {
+        "weight-epochs": epochs,
+        "weight-lr": lr,
+        "weight-l2": l2,
+    }
+    run_name = f"weighted_{i:02d}"
+    print(
+        f"[sweep][weighted {i}/{len(weighted_grid)}] "
+        f"epochs={epochs} lr={lr} l2={l2}"
+    )
+    out_dev, out_test, meta_path = run_ensemble("weighted", params, run_name)
+    metrics = score_predictions(out_test, y_test, choices_test)
+    record = {
+        "mode": "weighted",
+        "run_name": run_name,
+        "params": params,
+        "metrics": metrics,
+        "out_dev": str(out_dev),
+        "out_test": str(out_test),
+        "meta": str(meta_path),
+    }
+    results["weighted"].append(record)
+    if is_better(record, best_weighted):
+        best_weighted = record
+        print(
+            "[sweep][weighted] new best "
+            f"spearman={metrics['spearman']:.6f} "
+            f"acc_within_sd={metrics['acc_within_sd']:.6f} "
+            f"mse={metrics['mse']:.6f}"
+        )
+
+print(f"[sweep] mlp candidates: {len(mlp_grid)}")
+for i, (hidden_dim, dropout, lr, weight_decay) in enumerate(mlp_grid, start=1):
+    params = {
+        "mlp-hidden-dim": hidden_dim,
+        "mlp-dropout": dropout,
+        "mlp-lr": lr,
+        "mlp-weight-decay": weight_decay,
+        "mlp-epochs": 350,
+        "mlp-batch-size": 64,
+        "mlp-patience": 40,
+        "mlp-progress-every": 25,
+    }
+    run_name = f"mlp_{i:02d}"
+    print(
+        f"[sweep][mlp {i}/{len(mlp_grid)}] "
+        f"hidden_dim={hidden_dim} dropout={dropout} lr={lr} weight_decay={weight_decay}"
+    )
+    out_dev, out_test, meta_path = run_ensemble("mlp", params, run_name)
+    metrics = score_predictions(out_test, y_test, choices_test)
+    record = {
+        "mode": "mlp",
+        "run_name": run_name,
+        "params": params,
+        "metrics": metrics,
+        "out_dev": str(out_dev),
+        "out_test": str(out_test),
+        "meta": str(meta_path),
+    }
+    results["mlp"].append(record)
+    if is_better(record, best_mlp):
+        best_mlp = record
+        print(
+            "[sweep][mlp] new best "
+            f"spearman={metrics['spearman']:.6f} "
+            f"acc_within_sd={metrics['acc_within_sd']:.6f} "
+            f"mse={metrics['mse']:.6f}"
+        )
+
+if best_weighted is None and best_mlp is None:
+    raise SystemExit("Sweep produced no successful runs.")
+
+best_overall = best_weighted
+if is_better(best_mlp, best_overall):
+    best_overall = best_mlp
+
+best_weighted_with_contrib = None
+best_mlp_with_contrib = None
+if best_weighted is not None:
+    print("[sweep] rerun best weighted with contribution stats")
+    best_weighted_with_contrib = run_best_with_contributions("weighted", best_weighted)
+if best_mlp is not None:
+    print("[sweep] rerun best mlp with contribution stats")
+    best_mlp_with_contrib = run_best_with_contributions("mlp", best_mlp)
+
+summary = {
+    "best_weighted": best_weighted,
+    "best_mlp": best_mlp,
+    "best_overall": best_overall,
+    "best_weighted_with_contrib": best_weighted_with_contrib,
+    "best_mlp_with_contrib": best_mlp_with_contrib,
+    "results": results,
+}
+
+summary_path = SWEEP_DIR / "summary.json"
+summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+
+best_dev = Path(best_overall["out_dev"])
+best_test = Path(best_overall["out_test"])
+
+shutil.copyfile(best_dev, PRED_DIR / "dev_preds_ensemble_best.json")
+shutil.copyfile(best_test, PRED_DIR / "test_preds_ensemble_best.json")
+shutil.copyfile(best_dev, PRED_DIR / "dev_preds_ensemble.json")
+shutil.copyfile(best_test, PRED_DIR / "test_preds_ensemble.json")
+if best_weighted_with_contrib is not None:
+    shutil.copyfile(Path(best_weighted_with_contrib["contrib_path"]), PRED_DIR / "contrib_weighted_best.json")
+if best_mlp_with_contrib is not None:
+    shutil.copyfile(Path(best_mlp_with_contrib["contrib_path"]), PRED_DIR / "contrib_mlp_best.json")
+
+print("[sweep] done")
+print(f"[sweep] best overall mode: {best_overall['mode']}")
+print(
+    "[sweep] best test metrics "
+    f"spearman={best_overall['metrics']['spearman']:.6f} "
+    f"acc_within_sd={best_overall['metrics']['acc_within_sd']:.6f} "
+    f"mse={best_overall['metrics']['mse']:.6f}"
+)
+print(f"[sweep] summary: {summary_path}")
+print(f"[sweep] selected dev preds: {best_dev}")
+print(f"[sweep] selected test preds: {best_test}")
+if best_weighted_with_contrib is not None:
+    print(f"[sweep] best weighted contributions: {best_weighted_with_contrib['contrib_path']}")
+if best_mlp_with_contrib is not None:
+    print(f"[sweep] best mlp contributions: {best_mlp_with_contrib['contrib_path']}")
+PY

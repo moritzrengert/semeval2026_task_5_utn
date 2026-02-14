@@ -1,4 +1,4 @@
-"""NLI expert model definitions.
+"""SBERT expert model definitions.
 Created by Moritz Rengert.
 """
 
@@ -10,26 +10,32 @@ from typing import Dict
 import torch
 from transformers import AutoModel, AutoTokenizer
 
-from .losses import coral_expected_value, coral_loss
-from .coral_head import CoralHead
+from losses import coral_expected_value, coral_loss
+from coral_head import CoralHead
 
 
 @dataclass
-class NliExpertConfig:
-    model_name: str = "roberta-large-mnli"
+class SbertExpertConfig:
+    model_name: str = "sentence-transformers/all-mpnet-base-v2"
     num_classes: int = 5
     dropout: float = 0.1
     hidden_dim: int = 512
     max_length: int = 256
-    pooling: str = "cls"  # "cls" or "mean"
     projector_dim: int = 256
     use_classifier: bool = True
 
 
-class NliPlausibilityExpert(torch.nn.Module):
-    """Frozen RoBERTa-MNLI encoder + CORAL head."""
+def mean_pool(hidden: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    mask = mask.unsqueeze(-1).float()
+    summed = (hidden * mask).sum(dim=1)
+    denom = mask.sum(dim=1).clamp(min=1e-6)
+    return summed / denom
 
-    def __init__(self, config: NliExpertConfig):
+
+class SbertSemanticMatchingExpert(torch.nn.Module):
+    """Frozen all-mpnet-base-v2 encoder with pooled embeddings + CORAL head."""
+
+    def __init__(self, config: SbertExpertConfig):
         super().__init__()
         self.config = config
         self.tokenizer = AutoTokenizer.from_pretrained(config.model_name)
@@ -39,13 +45,14 @@ class NliPlausibilityExpert(torch.nn.Module):
         for param in self.encoder.parameters():
             param.requires_grad = False
         hidden_size = self.encoder.config.hidden_size
+        concat_dim = hidden_size * 2
         self.projector = None
-        head_input_dim = hidden_size
+        head_input_dim = concat_dim
         if self.config.projector_dim and self.config.projector_dim > 0:
             self.projector = torch.nn.Sequential(
-                torch.nn.LayerNorm(hidden_size),
+                torch.nn.LayerNorm(concat_dim),
                 torch.nn.Dropout(config.dropout),
-                torch.nn.Linear(hidden_size, config.projector_dim),
+                torch.nn.Linear(concat_dim, config.projector_dim),
                 torch.nn.GELU(),
                 torch.nn.Dropout(config.dropout),
             )
@@ -62,32 +69,48 @@ class NliPlausibilityExpert(torch.nn.Module):
     def num_classes(self) -> int:
         return self.config.num_classes
 
-    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(
+        self,
+        context_ids: torch.Tensor,
+        context_mask: torch.Tensor,
+        gloss_ids: torch.Tensor,
+        gloss_mask: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
         with torch.set_grad_enabled(self.finetune):
-            outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
-            if self.config.pooling == "mean":
-                mask = attention_mask.unsqueeze(-1).float()
-                summed = (outputs.last_hidden_state * mask).sum(dim=1)
-                cls = summed / mask.sum(dim=1).clamp(min=1e-6)
-            else:
-                cls = outputs.last_hidden_state[:, 0, :]
+            ctx_out = self.encoder(input_ids=context_ids, attention_mask=context_mask)
+            gloss_out = self.encoder(input_ids=gloss_ids, attention_mask=gloss_mask)
+            ctx_emb = mean_pool(ctx_out.last_hidden_state, context_mask)
+            gloss_emb = mean_pool(gloss_out.last_hidden_state, gloss_mask)
+        features = torch.cat([ctx_emb, gloss_emb], dim=-1)
         if self.projector is not None:
-            cls = self.projector(cls)
-        logits = self.head(cls)
+            features = self.projector(features)
+        logits = self.head(features)
         return {
             "ordinal_logits": logits,
-            "cls": cls,
-            "class_logits": self.classifier(cls) if self.classifier is not None else None,
+            "context_emb": ctx_emb,
+            "gloss_emb": gloss_emb,
+            "features": features,
+            "class_logits": self.classifier(features) if self.classifier is not None else None,
         }
 
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        outputs = self.forward(batch["input_ids"], batch["attention_mask"])
+        outputs = self.forward(
+            batch["context_ids"],
+            batch["context_mask"],
+            batch["gloss_ids"],
+            batch["gloss_mask"],
+        )
         loss = coral_loss(outputs["ordinal_logits"], batch["ordinal_labels"], num_classes=self.num_classes)
         return {"loss": loss, **outputs}
 
     @torch.no_grad()
     def predict_scores(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        logits = self.forward(batch["input_ids"], batch["attention_mask"])["ordinal_logits"]
+        logits = self.forward(
+            batch["context_ids"],
+            batch["context_mask"],
+            batch["gloss_ids"],
+            batch["gloss_mask"],
+        )["ordinal_logits"]
         return coral_expected_value(logits) + 1.0
 
     def unfreeze_last_layers(self, n_layers: int) -> None:

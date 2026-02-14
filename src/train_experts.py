@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from transformers import get_linear_schedule_with_warmup
 import matplotlib
@@ -16,13 +17,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from models.losses import coral_expected_value, coral_loss
+from losses import coral_expected_value, coral_loss
 from scipy.stats import spearmanr
-from models.nli_expert import NliExpertConfig, NliPlausibilityExpert
-from models.sbert_expert import SbertExpertConfig, SbertSemanticMatchingExpert
-from models.collate import make_nli_collate_fn, make_sbert_collate_fn
-from models.expert_dataset import SemevalExpertDataset
-from models.data_utils import expand_annotator_samples, load_dataset
+from nli_expert import NliExpertConfig, NliPlausibilityExpert, make_nli_collate_fn
+from sbert_expert import SbertExpertConfig, SbertSemanticMatchingExpert, make_sbert_collate_fn
+from expert_dataset import SemevalExpertDataset
+from data_utils import expand_annotator_samples, load_dataset
 
 
 def move_to_device(batch: Dict[str, Any], device: torch.device) -> Dict[str, Any]:
@@ -34,6 +34,43 @@ def move_to_device(batch: Dict[str, Any], device: torch.device) -> Dict[str, Any
         return item
 
     return {k: _move(v) for k, v in batch.items()}
+
+
+def resolve_device(requested_device: str | None) -> torch.device:
+    if requested_device:
+        return torch.device(requested_device)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def forward_batch(model: torch.nn.Module, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+    if "context_ids" in batch:
+        return model(
+            batch["context_ids"],
+            batch["context_mask"],
+            batch["gloss_ids"],
+            batch["gloss_mask"],
+        )
+    return model(batch["input_ids"], batch["attention_mask"])
+
+
+def compute_soft_kl_loss(
+    class_logits: torch.Tensor | None,
+    soft_targets: torch.Tensor | None,
+    soft_mask: torch.Tensor | None,
+) -> Tuple[torch.Tensor | None, int]:
+    if class_logits is None or soft_targets is None or soft_mask is None or not soft_mask.any():
+        return None, 0
+    active = soft_mask.bool()
+    kl = F.kl_div(
+        F.log_softmax(class_logits[active], dim=-1),
+        soft_targets[active],
+        reduction="batchmean",
+    )
+    return kl, int(active.sum().item())
 
 
 def build_expert(
@@ -73,6 +110,65 @@ def build_expert(
     return model, collate, head
 
 
+def build_datasets(args: argparse.Namespace) -> Tuple[SemevalExpertDataset, SemevalExpertDataset | None]:
+    train_records = load_dataset(args.train_path)
+    dev_records = load_dataset(args.dev_path) if args.dev_path else []
+    if args.expand_annotators:
+        train_records = expand_annotator_samples(train_records, label_key=args.label_key, choices_key="choices")
+        if dev_records:
+            dev_records = expand_annotator_samples(dev_records, label_key=args.label_key, choices_key="choices")
+
+    train_ds = SemevalExpertDataset(
+        train_records,
+        num_classes=args.num_classes,
+        label_key=args.label_key,
+        target_aware=args.target_aware,
+    )
+    dev_ds = (
+        SemevalExpertDataset(
+            dev_records,
+            num_classes=args.num_classes,
+            label_key=args.label_key,
+            target_aware=args.target_aware,
+        )
+        if dev_records
+        else None
+    )
+    return train_ds, dev_ds
+
+
+def build_optimizer_and_scheduler(
+    model: torch.nn.Module,
+    train_loader: DataLoader,
+    args: argparse.Namespace,
+) -> Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR]:
+    # Split encoder vs head params for differential learning rates.
+    enc_params = []
+    head_params = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if "encoder" in name:
+            enc_params.append(param)
+        else:
+            head_params.append(param)
+    param_groups = []
+    if enc_params and args.encoder_lr > 0:
+        param_groups.append({"params": enc_params, "lr": args.encoder_lr})
+    if head_params:
+        param_groups.append({"params": head_params, "lr": args.lr})
+
+    optimizer = torch.optim.AdamW(param_groups, weight_decay=args.weight_decay)
+    total_steps = len(train_loader) * args.epochs
+    warmup_steps = int(total_steps * args.warmup_ratio)
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=warmup_steps,
+        num_training_steps=total_steps,
+    )
+    return optimizer, scheduler
+
+
 @torch.no_grad()
 def evaluate(
     model: torch.nn.Module,
@@ -97,15 +193,7 @@ def evaluate(
     within_sd_total = 0
     for batch in loader:
         batch = move_to_device(batch, device)
-        if hasattr(model, "forward") and "context_ids" in batch:
-            outputs = model(
-                batch["context_ids"],
-                batch["context_mask"],
-                batch["gloss_ids"],
-                batch["gloss_mask"],
-            )
-        else:
-            outputs = model(batch["input_ids"], batch["attention_mask"])
+        outputs = forward_batch(model, batch)
         logits = outputs["ordinal_logits"]
         class_logits = outputs.get("class_logits")
         coral = coral_loss(logits, batch["ordinal_labels"], num_classes=num_classes) * (num_classes - 1)
@@ -118,20 +206,9 @@ def evaluate(
         # optional KL if soft labels exist
         soft_targets = batch.get("soft_targets")
         soft_mask = batch.get("soft_mask")
-        if (
-            class_logits is not None
-            and soft_targets is not None
-            and soft_mask is not None
-            and soft_mask.any()
-            and soft_weight > 0
-        ):
-            active = soft_mask.bool()
-            kl = torch.nn.functional.kl_div(
-                torch.nn.functional.log_softmax(class_logits[active], dim=-1),
-                soft_targets[active],
-                reduction="batchmean",
-            )
-            kl_sum += kl.item() * active.sum().item()
+        kl, active_count = compute_soft_kl_loss(class_logits, soft_targets, soft_mask)
+        if kl is not None and soft_weight > 0:
+            kl_sum += kl.item() * active_count
             total_loss = total_loss + soft_weight * kl
         coral_sum += coral.item() * batch["scores"].size(0)
         loss_sum += total_loss.item() * batch["scores"].size(0)
@@ -171,23 +248,8 @@ def evaluate(
 
 
 def train(args: argparse.Namespace) -> None:
-    if args.device:
-        device = torch.device(args.device)
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        device = torch.device("cpu")
-    train_records = load_dataset(args.train_path)
-    dev_records = load_dataset(args.dev_path) if args.dev_path else []
-    if args.expand_annotators:
-        train_records = expand_annotator_samples(train_records, label_key=args.label_key, choices_key="choices")
-        if dev_records:
-            dev_records = expand_annotator_samples(dev_records, label_key=args.label_key, choices_key="choices")
-
-    train_ds = SemevalExpertDataset(train_records, num_classes=args.num_classes, label_key=args.label_key)
-    dev_ds = SemevalExpertDataset(dev_records, num_classes=args.num_classes, label_key=args.label_key) if dev_records else None
+    device = resolve_device(args.device)
+    train_ds, dev_ds = build_datasets(args)
 
     model, collate_fn, expert_name = build_expert(args)
 
@@ -195,25 +257,7 @@ def train(args: argparse.Namespace) -> None:
     dev_loader = DataLoader(dev_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn) if dev_ds else None
 
     model.to(device)
-    # Split encoder vs head params for differential learning rates.
-    enc_params = []
-    head_params = []
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        if "encoder" in name:
-            enc_params.append(param)
-        else:
-            head_params.append(param)
-    param_groups = []
-    if enc_params and args.encoder_lr > 0:
-        param_groups.append({"params": enc_params, "lr": args.encoder_lr})
-    if head_params:
-        param_groups.append({"params": head_params, "lr": args.lr})
-    optimizer = torch.optim.AdamW(param_groups, weight_decay=args.weight_decay)
-    total_steps = len(train_loader) * args.epochs
-    warmup_steps = int(total_steps * args.warmup_ratio)
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
+    optimizer, scheduler = build_optimizer_and_scheduler(model, train_loader, args)
     best_dev_loss = float("inf")
     epochs_without_improve = 0
     history = []
@@ -235,19 +279,8 @@ def train(args: argparse.Namespace) -> None:
             soft_targets = batch.get("soft_targets")
             soft_mask = batch.get("soft_mask")
             class_logits = outputs.get("class_logits")
-            if (
-                soft_targets is not None
-                and soft_mask is not None
-                and class_logits is not None
-                and args.soft_weight > 0
-                and soft_mask.any()
-            ):
-                active = soft_mask.bool()
-                soft_loss = torch.nn.functional.kl_div(
-                    torch.nn.functional.log_softmax(class_logits[active], dim=-1),
-                    soft_targets[active],
-                    reduction="batchmean",
-                )
+            soft_loss, _ = compute_soft_kl_loss(class_logits, soft_targets, soft_mask)
+            if soft_loss is not None and args.soft_weight > 0:
                 loss = loss + args.soft_weight * soft_loss
             optimizer.zero_grad()
             loss.backward()
@@ -371,6 +404,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ema-decay", type=float, default=0.999)
     parser.add_argument("--soft-weight", type=float, default=0.0, help="Weight for soft-label KL loss; 0 disables.")
     parser.add_argument("--expand-annotators", action="store_true", help="Use each annotator score as its own training sample.")
+    parser.add_argument("--target-aware", action="store_true", help="Mark the target homonym in text.",)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--log-every", type=int, default=20)
     parser.add_argument("--save-path", type=str, default=None)

@@ -218,8 +218,10 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-*.pt
 *.png
 *.out
 *.err
 runs/*
+predictions/ensemble_sweep_runs/*
+*.pt
+*.pth

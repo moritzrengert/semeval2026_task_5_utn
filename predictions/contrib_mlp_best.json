@@ -1,0 +1,44 @@
+{
+  "method": "mlp_perturbation",
+  "baseline": "mean",
+  "n_samples": 930,
+  "by_model": [
+    {
+      "model": "ares",
+      "mean_signed_delta": 0.005235483184937508,
+      "mean_abs_delta": 0.08369044552567184,
+      "abs_share": 0.20311969970520358
+    },
+    {
+      "model": "lmms",
+      "mean_signed_delta": -0.007099209165060392,
+      "mean_abs_delta": 0.0854005717462109,
+      "abs_share": 0.20727023710755657
+    },
+    {
+      "model": "nli",
+      "mean_signed_delta": 0.0027501963799999606,
+      "mean_abs_delta": 0.01397058694593368,
+      "abs_share": 0.03390711337882684
+    },
+    {
+      "model": "sbert",
+      "mean_signed_delta": 0.0025126716142059653,
+      "mean_abs_delta": 0.030642333594701622,
+      "abs_share": 0.07437003780931299
+    },
+    {
+      "model": "sensembert",
+      "mean_signed_delta": -0.013157054813959266,
+      "mean_abs_delta": 0.04058318535486857,
+      "abs_share": 0.09849683999869406
+    },
+    {
+      "model": "stsbert",
+      "mean_signed_delta": -0.03272937433693999,
+      "mean_abs_delta": 0.15773812916971022,
+      "abs_share": 0.3828360720004059
+    }
+  ],
+  "split": "test"
+}

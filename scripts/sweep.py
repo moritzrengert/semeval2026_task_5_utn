@@ -431,7 +431,7 @@ def run_trial(idx: int, expert: str, cfg: Dict[str, any], base_args: argparse.Na
     cmd = [
         base_args.python,
         "-m",
-        "models.train_experts",
+        base_args.train_module,
         "--expert",
         expert,
         "--model-name",
@@ -474,11 +474,17 @@ def run_trial(idx: int, expert: str, cfg: Dict[str, any], base_args: argparse.Na
         cmd += ["--use-ema"]
     if cfg.get("expand_annotators", False):
         cmd += ["--expand-annotators"]
+    if base_args.target_aware:
+        cmd += ["--target-aware"]
     if expert == "nli":
         cmd += ["--pooling", cfg["pooling"]]
     env = os.environ.copy()
     if base_args.pythonpath:
-        env["PYTHONPATH"] = base_args.pythonpath
+        pythonpath = os.path.abspath(base_args.pythonpath)
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            f"{pythonpath}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else pythonpath
+        )
     start = time.time()
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     duration = time.time() - start
@@ -536,12 +542,23 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out-dir", type=Path, default=Path("runs/sweep"))
     parser.add_argument("--python", type=str, default="python")
+    parser.add_argument(
+        "--train-module",
+        type=str,
+        default="train_experts",
+        help="Module path for the expert training entrypoint.",
+    )
     parser.add_argument("--pythonpath", type=str, default="src")
     parser.add_argument("--model-name", type=str, default="sentence-transformers/all-mpnet-base-v2")
     parser.add_argument("--nli-model-name", type=str, default="roberta-large-mnli")
     parser.add_argument("--batch-size-sbert", type=int, default=8)
     parser.add_argument("--batch-size-nli", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=12)
+    parser.add_argument(
+        "--target-aware",
+        action="store_true",
+        help="Enable explicit target-word marking/prefixing in expert text inputs.",
+    )
     parser.add_argument("--encoder-lr", type=float, default=5e-6)
     parser.add_argument("--early-stop-patience", type=int, default=2)
     parser.add_argument(

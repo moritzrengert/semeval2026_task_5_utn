@@ -4,15 +4,26 @@ Created by Moritz Rengert.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Sequence
 
 import torch
 from torch.utils.data import Dataset
 
-from .data_utils import ordinal_class
+from data_utils import ordinal_class
+from nli_expert.text import build_hypothesis
 
 
-def build_context(record: Dict[str, Any]) -> str:
+def _mark_target(text: str, target: str) -> str:
+    """Mark the first occurrence of target in text with lightweight tags."""
+    if not text or not target:
+        return text
+    # Prefer whole-word matches to avoid tagging partial substrings.
+    pattern = re.compile(rf"\b{re.escape(target)}\b", flags=re.IGNORECASE)
+    return pattern.sub(lambda m: f"[TGT] {m.group(0)} [/TGT]", text, count=1)
+
+
+def build_context(record: Dict[str, Any], target_aware: bool = False) -> str:
     """Combine the contextual fields into a single sentence."""
     parts = [
         record.get("precontext"),
@@ -20,14 +31,15 @@ def build_context(record: Dict[str, Any]) -> str:
         record.get("ending"),
         record.get("example_sentence"),
     ]
-    return " ".join(str(p) for p in parts if p).strip()
-
-
-def build_hypothesis(record: Dict[str, Any]) -> str:
-    """Create an NLI-style hypothesis spelling out the judged meaning."""
-    word = record.get("homonym", "the word")
-    meaning = record.get("judged_meaning", "")
-    return f"The word '{word}' here means: {meaning}"
+    context = " ".join(str(p) for p in parts if p).strip()
+    if not target_aware:
+        return context
+    target = str(record.get("homonym", "")).strip()
+    if not target:
+        return context
+    marked_context = _mark_target(context, target)
+    # Prefix the target explicitly so the model has a stable anchor even if matching fails.
+    return f"Target word: {target}. {marked_context}"
 
 
 class SemevalExpertDataset(Dataset):
@@ -40,6 +52,7 @@ class SemevalExpertDataset(Dataset):
         label_key: str = "average",
         require_labels: bool = True,
         drop_invalid_labels: bool = False,
+        target_aware: bool = False,
     ):
         self.require_labels = require_labels
         self.drop_invalid_labels = drop_invalid_labels
@@ -47,6 +60,7 @@ class SemevalExpertDataset(Dataset):
         self.num_classes = num_classes
         self.label_key = label_key
         self.has_labels = require_labels
+        self.target_aware = target_aware
 
     def __len__(self) -> int:
         return len(self.records)
@@ -64,9 +78,9 @@ class SemevalExpertDataset(Dataset):
         else:
             label_tensor = None
             ordinal_tensor = None
-        context = build_context(record)
+        context = build_context(record, target_aware=self.target_aware)
         meaning = str(record.get("judged_meaning", ""))
-        hypothesis = build_hypothesis(record)
+        hypothesis = build_hypothesis(record, target_aware=self.target_aware)
         choices = record.get("choices")
         soft_targets = None
         choices_tensor = None

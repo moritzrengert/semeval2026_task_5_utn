@@ -1,0 +1,49 @@
+{
+  "method": "weighted_linear",
+  "n_samples": 930,
+  "by_model": [
+    {
+      "model": "ares",
+      "weight": 0.1688392609357834,
+      "mean_signed_contribution": 0.526530385017395,
+      "mean_abs_contribution": 0.526530385017395,
+      "abs_share": 0.1635257452726364
+    },
+    {
+      "model": "lmms",
+      "weight": 0.16726277768611908,
+      "mean_signed_contribution": 0.5112224221229553,
+      "mean_abs_contribution": 0.5112224221229553,
+      "abs_share": 0.15877151489257812
+    },
+    {
+      "model": "nli",
+      "weight": 0.054469287395477295,
+      "mean_signed_contribution": 0.1796729564666748,
+      "mean_abs_contribution": 0.1796729564666748,
+      "abs_share": 0.05580144003033638
+    },
+    {
+      "model": "sbert",
+      "weight": 0.03698814660310745,
+      "mean_signed_contribution": 0.11642039567232132,
+      "mean_abs_contribution": 0.11642039567232132,
+      "abs_share": 0.036156944930553436
+    },
+    {
+      "model": "sensembert",
+      "weight": 0.19353461265563965,
+      "mean_signed_contribution": 0.5691904425621033,
+      "mean_abs_contribution": 0.5691904425621033,
+      "abs_share": 0.1767747700214386
+    },
+    {
+      "model": "stsbert",
+      "weight": 0.37890592217445374,
+      "mean_signed_contribution": 1.3168258666992188,
+      "mean_abs_contribution": 1.3168258666992188,
+      "abs_share": 0.40896961092948914
+    }
+  ],
+  "split": "test"
+}

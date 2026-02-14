@@ -1,12 +1,10 @@
 """Model components for SemEval Task 5 experiments."""
 
-from .nli_expert import NliPlausibilityExpert, NliExpertConfig
-from .sbert_expert import SbertSemanticMatchingExpert, SbertExpertConfig
-from .collate import make_nli_collate_fn, make_sbert_collate_fn
+from .nli_expert import NliPlausibilityExpert, NliExpertConfig, make_nli_collate_fn, build_hypothesis
+from .sbert_expert import SbertSemanticMatchingExpert, SbertExpertConfig, make_sbert_collate_fn
 from .expert_dataset import (
     SemevalExpertDataset,
     build_context,
-    build_hypothesis,
 )
 from .coral_head import CoralHead
 

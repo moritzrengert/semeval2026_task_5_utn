@@ -1,0 +1,48 @@
+{
+  "combine": "mlp",
+  "model_names": [
+    "ares",
+    "lmms",
+    "nli",
+    "sbert",
+    "sensembert",
+    "stsbert"
+  ],
+  "dev_pred_files": [
+    "predictions/dev_preds_ares.json",
+    "predictions/dev_preds_lmms.json",
+    "predictions/dev_preds_nli.json",
+    "predictions/dev_preds_sbert.json",
+    "predictions/dev_preds_sensembert.json",
+    "predictions/dev_preds_stsbert.json"
+  ],
+  "test_pred_files": [
+    "predictions/test_preds_ares.json",
+    "predictions/test_preds_lmms.json",
+    "predictions/test_preds_nli.json",
+    "predictions/test_preds_sbert.json",
+    "predictions/test_preds_sensembert.json",
+    "predictions/test_preds_stsbert.json"
+  ],
+  "mlp_info": {
+    "best_objective": 1.1073269844055176,
+    "best_epoch": 231,
+    "used_validation": true,
+    "device": "cuda"
+  },
+  "mlp_config": {
+    "hidden_dim": 16,
+    "dropout": 0.1,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 400,
+    "batch_size": 64,
+    "patience": 40,
+    "progress_every": 10,
+    "seed": 42,
+    "hidden_grid": null,
+    "dropout_grid": null,
+    "lr_grid": null,
+    "weight_decay_grid": null
+  }
+}
