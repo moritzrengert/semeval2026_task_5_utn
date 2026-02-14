@@ -46,6 +46,7 @@ def build_expert(
             hidden_dim=args.hidden_dim,
             max_length=args.max_length,
             pooling=args.pooling,
+            projector_dim=args.projector_dim,
         )
         model = NliPlausibilityExpert(config)
         collate = make_nli_collate_fn(model.tokenizer, max_length=config.max_length, num_classes=config.num_classes)
@@ -57,6 +58,7 @@ def build_expert(
             dropout=args.dropout,
             hidden_dim=args.hidden_dim,
             max_length=args.max_length,
+            projector_dim=args.projector_dim,
         )
         model = SbertSemanticMatchingExpert(config)
         collate = make_sbert_collate_fn(model.tokenizer, max_length=config.max_length, num_classes=config.num_classes)
@@ -355,6 +357,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-ratio", type=float, default=0.06)
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--train-encoder-layers", type=int, default=0, help="Unfreeze last N transformer layers; 0 keeps encoder frozen.")
+    parser.add_argument("--projector-dim", type=int, default=256, help="Dim of optional projection layer before CORAL head; 0 disables.")
     parser.add_argument("--early-stop-patience", type=int, default=3)
     parser.add_argument("--early-stop-delta", type=float, default=0.0)
     parser.add_argument("--overfit-patience", type=int, default=2, help="Stop if train improves but dev worsens for this many epochs.")

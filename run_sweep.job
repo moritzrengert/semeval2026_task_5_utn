@@ -3,7 +3,7 @@
 #SBATCH --job-name=semeval_sweep
 #SBATCH --output=slurm_logs/job_%j_experiment_grid.out
 #SBATCH --error=slurm_logs/job_%j_experiment_grid.err
-#SBATCH --time=10:00:00
+#SBATCH --time=24:00:00
 #SBATCH --partition=a40
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=16
@@ -48,4 +48,9 @@ export PYTHONPATH="$PWD/src:${PYTHONPATH-}"
 # --- Run experiment (multi-GPU via torchrun; per-GPU batch_size is set in code) ---
 NPERNODE="${SLURM_GPUS_PER_NODE:-${SLURM_GPUS_ON_NODE:-2}}"
 
-python scripts/sweep.py
+python scripts/sweep.py \
+  --max-trials 0 \
+  --safety-minutes 45 \
+  --runtime-margin 1.35 \
+  --keep-best-only \
+  --keep-logs errors
