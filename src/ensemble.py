@@ -1,15 +1,6 @@
-#!/usr/bin/env python3
 """
 Ensemble precomputed prediction JSON files.
-
-Supported combine modes:
-- average: simple mean across models
-- weighted: weighted average; pass --weights or learn weights on dev labels
-- mlp: train a small MLP on dev labels
-
-Training convention for weighted/mlp:
-- train on dev predictions + dev labels
-- if test labels are unavailable, use dev-only cross-fitting for model selection
+Created by Moritz Rengert.
 """
 
 import argparse
