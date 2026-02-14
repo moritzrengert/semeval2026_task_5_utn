@@ -1,12 +1,16 @@
+"""SBERT expert model definitions.
+Created by Moritz Rengert.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Dict
 
 import torch
-from transformers import AutoModel, AutoTokenizer, PreTrainedTokenizerBase
+from transformers import AutoModel, AutoTokenizer
 
-from final_model.losses import coral_expected_value, coral_loss
+from .losses import coral_expected_value, coral_loss
 from .coral_head import CoralHead
 
 
@@ -19,41 +23,6 @@ class SbertExpertConfig:
     max_length: int = 256
     projector_dim: int = 256
     use_classifier: bool = True
-
-
-def make_sbert_collate_fn(tokenizer: PreTrainedTokenizerBase, max_length: int):
-    """Tokenize context/definition pairs for the SBERT expert."""
-
-    def collate(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
-        contexts = [sample["context"] for sample in batch]
-        glosses = [sample["gloss"] for sample in batch]
-        ctx_enc = tokenizer(
-            contexts,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt",
-        )
-        gloss_enc = tokenizer(
-            glosses,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt",
-        )
-        labels = torch.stack([sample["ordinal_label"] for sample in batch], dim=0)
-        scores = torch.stack([sample["label"] for sample in batch], dim=0)
-        return {
-            "context_ids": ctx_enc["input_ids"],
-            "context_mask": ctx_enc["attention_mask"],
-            "gloss_ids": gloss_enc["input_ids"],
-            "gloss_mask": gloss_enc["attention_mask"],
-            "ordinal_labels": labels,
-            "scores": scores,
-            "sample_ids": [sample["sample_id"] for sample in batch],
-        }
-
-    return collate
 
 
 def mean_pool(hidden: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:

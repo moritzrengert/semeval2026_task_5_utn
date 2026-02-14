@@ -1,3 +1,7 @@
+"""CORAL head modules for ordinal regression experts.
+Created by Moritz Rengert.
+"""
+
 from __future__ import annotations
 
 from typing import List

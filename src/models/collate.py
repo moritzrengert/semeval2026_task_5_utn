@@ -1,3 +1,7 @@
+"""Batch collation utilities for NLI and SBERT experts.
+Created by Moritz Rengert.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List

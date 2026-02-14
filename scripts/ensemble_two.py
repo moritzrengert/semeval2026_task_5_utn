@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Ensemble two pretrained experts (NLI or SBERT) with configurable combining rule.
+Ensemble two pretrained experts with configurable combining rule.
+Created by Moritz Rengert.
 
 Methods:
 - mean: simple average of the two predicted scores
@@ -15,9 +16,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from pathlib import Path
-from typing import Any, Dict, Tuple, Optional
+from typing import Any, Dict, Tuple
 
 import numpy as np
 import torch
@@ -28,11 +28,11 @@ from models.nli_expert import NliExpertConfig, NliPlausibilityExpert
 from models.sbert_expert import SbertExpertConfig, SbertSemanticMatchingExpert
 from models.collate import make_nli_collate_fn, make_sbert_collate_fn
 from models.expert_dataset import SemevalExpertDataset
-from final_model.data import load_dataset, expand_annotator_samples
-from final_model.losses import coral_expected_value
+from models.data_utils import expand_annotator_samples, load_dataset
+from models.losses import coral_expected_value
 
 
-def load_records(path: str, expand: bool, label_key: str, num_classes: int) -> list[Dict[str, Any]]:
+def load_records(path: str, expand: bool, label_key: str) -> list[Dict[str, Any]]:
     records = load_dataset(path)
     if expand:
         records = expand_annotator_samples(records, label_key=label_key, choices_key="choices")
@@ -125,7 +125,6 @@ def main():
     ap.add_argument("--expert2", choices=["sbert", "nli"], default=None, help="If omitted, inferred from ckpt2['expert'].")
     ap.add_argument("--model-name1", type=str, default=None, help="If omitted, uses a sensible default for expert1.")
     ap.add_argument("--model-name2", type=str, default=None, help="If omitted, uses a sensible default for expert2.")
-    ap.add_argument("--train-path", type=str, default="semeval26-05-scripts/data/train.json")
     ap.add_argument("--dev-path", type=str, default="semeval26-05-scripts/data/dev.json")
     ap.add_argument("--test-path", type=str, default=None)
     ap.add_argument("--ckpt1", type=str, required=True, help="Checkpoint file for first expert (must contain state_dict).")
@@ -155,7 +154,7 @@ def main():
             device = torch.device("cpu")
 
     # Load datasets
-    dev_records = load_records(args.dev_path, args.expand_annotators, label_key="average", num_classes=args.num_classes)
+    dev_records = load_records(args.dev_path, args.expand_annotators, label_key="average")
     dev_ds = SemevalExpertDataset(dev_records, num_classes=args.num_classes, label_key="average")
 
     # Load checkpoints and infer missing metadata
@@ -215,7 +214,7 @@ def main():
     )
 
     if args.test_path:
-        test_records = load_records(args.test_path, args.expand_annotators, label_key="average", num_classes=args.num_classes)
+        test_records = load_records(args.test_path, args.expand_annotators, label_key="average")
         # Ensure numeric placeholder labels so the dataset/loader can collate, even if test golds are unknown.
         for rec in test_records:
             try:

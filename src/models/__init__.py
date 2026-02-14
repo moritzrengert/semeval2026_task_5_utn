@@ -7,7 +7,6 @@ from .expert_dataset import (
     SemevalExpertDataset,
     build_context,
     build_hypothesis,
-    load_expert_dataset,
 )
 from .coral_head import CoralHead
 
@@ -19,7 +18,6 @@ __all__ = [
     "SemevalExpertDataset",
     "build_context",
     "build_hypothesis",
-    "load_expert_dataset",
     "make_nli_collate_fn",
     "make_sbert_collate_fn",
     "CoralHead",

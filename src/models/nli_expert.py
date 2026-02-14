@@ -1,12 +1,16 @@
+"""NLI expert model definitions.
+Created by Moritz Rengert.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Dict
 
 import torch
-from transformers import AutoModel, AutoTokenizer, PreTrainedTokenizerBase
+from transformers import AutoModel, AutoTokenizer
 
-from final_model.losses import coral_expected_value, coral_loss
+from .losses import coral_expected_value, coral_loss
 from .coral_head import CoralHead
 
 
@@ -20,33 +24,6 @@ class NliExpertConfig:
     pooling: str = "cls"  # "cls" or "mean"
     projector_dim: int = 256
     use_classifier: bool = True
-
-
-def make_nli_collate_fn(tokenizer: PreTrainedTokenizerBase, max_length: int):
-    """Tokenize premise/hypothesis pairs for the NLI expert."""
-
-    def collate(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
-        premises = [sample["premise"] for sample in batch]
-        hypotheses = [sample["hypothesis"] for sample in batch]
-        enc = tokenizer(
-            premises,
-            hypotheses,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt",
-        )
-        labels = torch.stack([sample["ordinal_label"] for sample in batch], dim=0)
-        scores = torch.stack([sample["label"] for sample in batch], dim=0)
-        return {
-            "input_ids": enc["input_ids"],
-            "attention_mask": enc["attention_mask"],
-            "ordinal_labels": labels,
-            "scores": scores,
-            "sample_ids": [sample["sample_id"] for sample in batch],
-        }
-
-    return collate
 
 
 class NliPlausibilityExpert(torch.nn.Module):

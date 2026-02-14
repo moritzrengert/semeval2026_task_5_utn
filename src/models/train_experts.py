@@ -1,9 +1,12 @@
+"""Training entry point for NLI and SBERT experts.
+Created by Moritz Rengert.
+"""
+
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 from typing import Any, Dict, Tuple
-import copy
 
 import torch
 from torch.utils.data import DataLoader
@@ -13,13 +16,13 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from final_model.losses import coral_expected_value, coral_loss
+from models.losses import coral_expected_value, coral_loss
 from scipy.stats import spearmanr
 from models.nli_expert import NliExpertConfig, NliPlausibilityExpert
 from models.sbert_expert import SbertExpertConfig, SbertSemanticMatchingExpert
 from models.collate import make_nli_collate_fn, make_sbert_collate_fn
-from models.expert_dataset import load_expert_dataset, SemevalExpertDataset
-from final_model.data import expand_annotator_samples, load_dataset
+from models.expert_dataset import SemevalExpertDataset
+from models.data_utils import expand_annotator_samples, load_dataset
 
 
 def move_to_device(batch: Dict[str, Any], device: torch.device) -> Dict[str, Any]:
@@ -190,7 +193,6 @@ def train(args: argparse.Namespace) -> None:
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
     dev_loader = DataLoader(dev_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn) if dev_ds else None
-    test_loader = None
 
     model.to(device)
     # Split encoder vs head params for differential learning rates.

@@ -1,3 +1,7 @@
+"""Run hyperparameter sweeps for NLI and SBERT experts.
+Created by Moritz Rengert.
+"""
+
 from __future__ import annotations
 
 import argparse

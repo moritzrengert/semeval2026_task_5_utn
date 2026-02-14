@@ -1,3 +1,7 @@
+"""Dataset wrappers for NLI and SBERT expert training.
+Created by Moritz Rengert.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, Sequence
@@ -5,7 +9,7 @@ from typing import Any, Dict, Sequence
 import torch
 from torch.utils.data import Dataset
 
-from final_model.data import load_dataset, ordinal_class
+from .data_utils import ordinal_class
 
 
 def build_context(record: Dict[str, Any]) -> str:
@@ -101,18 +105,3 @@ class SemevalExpertDataset(Dataset):
                 raise ValueError(f"Label '{label_key}' must be numeric, got {rec[label_key]!r}")
             filtered.append(rec)
         return filtered
-
-
-def load_expert_dataset(
-    path: str | None,
-    num_classes: int = 5,
-    label_key: str = "average",
-    expand_annotators: bool = False,
-    include_average: bool = False,
-) -> SemevalExpertDataset:
-    from final_model.data import expand_annotator_samples
-
-    records = load_dataset(path) if path else []
-    if expand_annotators:
-        records = expand_annotator_samples(records, label_key=label_key, include_average=include_average)
-    return SemevalExpertDataset(records, num_classes=num_classes, label_key=label_key)
