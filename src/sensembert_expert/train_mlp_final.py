@@ -1,3 +1,5 @@
+"""Created by Noas Shaalan."""
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -6,14 +8,6 @@ import numpy as np
 import os
 import sys
 import json
-
-'''
-Created by Noas Shaalan,
-
-This script is used to train the MLP model for the SensEmBERT expert,
-
-
-'''
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PARENT_DIR = os.path.dirname(SCRIPT_DIR)
 sys.path.append(PARENT_DIR)
