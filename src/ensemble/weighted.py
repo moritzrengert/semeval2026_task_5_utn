@@ -1,4 +1,6 @@
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+"""Created by Moritz Rengert."""
+
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
 

@@ -1,3 +1,5 @@
+"""Created by Moritz Rengert."""
+
 from typing import Any, Dict, Tuple
 
 import numpy as np

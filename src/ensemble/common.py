@@ -1,3 +1,5 @@
+"""Created by Moritz Rengert."""
+
 import json
 import sys
 from itertools import product
