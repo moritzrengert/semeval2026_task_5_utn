@@ -79,6 +79,9 @@ def parse_args() -> argparse.Namespace:
         (("--mlp-dropout",), dict(type=float, default=0.1)),
         (("--mlp-lr",), dict(type=float, default=1e-3)),
         (("--mlp-weight-decay",), dict(type=float, default=1e-4)),
+        (("--mlp-loss",), dict(choices=["mse", "coral", "coral_mse"], default="mse")),
+        (("--mlp-coral-weight",), dict(type=float, default=1.0)),
+        (("--mlp-mse-weight",), dict(type=float, default=1.0)),
         (("--mlp-epochs",), dict(type=int, default=400)),
         (("--mlp-batch-size",), dict(type=int, default=64)),
         (("--mlp-patience",), dict(type=int, default=40)),
@@ -226,6 +229,9 @@ def run_mlp(args: argparse.Namespace, data: PreparedData, use_dev_cv: bool) -> T
             device_str=args.device,
             seed=args.seed,
             progress_every=args.mlp_progress_every,
+            loss_mode=args.mlp_loss,
+            coral_weight=args.mlp_coral_weight,
+            mse_weight=args.mlp_mse_weight,
         )
     else:
         model, fit_info = fit_mlp(
@@ -242,10 +248,17 @@ def run_mlp(args: argparse.Namespace, data: PreparedData, use_dev_cv: bool) -> T
             patience=args.mlp_patience,
             device_str=args.device,
             seed=args.seed,
+            loss_mode=args.mlp_loss,
+            num_classes=args.num_classes,
+            coral_weight=args.mlp_coral_weight,
+            mse_weight=args.mlp_mse_weight,
             progress_every=args.mlp_progress_every,
             progress_prefix="[mlp] ",
         )
-        dev_preds, test_preds = predict_mlp(model, data.x_dev, args.device), predict_mlp(model, data.x_test, args.device)
+        dev_preds, test_preds = (
+            predict_mlp(model, data.x_dev, args.device, loss_mode=args.mlp_loss, num_classes=args.num_classes),
+            predict_mlp(model, data.x_test, args.device, loss_mode=args.mlp_loss, num_classes=args.num_classes),
+        )
 
     meta = {
         "mlp_info": fit_info,
@@ -254,6 +267,9 @@ def run_mlp(args: argparse.Namespace, data: PreparedData, use_dev_cv: bool) -> T
             "dropout": args.mlp_dropout,
             "lr": args.mlp_lr,
             "weight_decay": args.mlp_weight_decay,
+            "loss": args.mlp_loss,
+            "coral_weight": args.mlp_coral_weight,
+            "mse_weight": args.mlp_mse_weight,
             "epochs": args.mlp_epochs,
             "batch_size": args.mlp_batch_size,
             "patience": args.mlp_patience,
@@ -277,6 +293,8 @@ def run_mlp(args: argparse.Namespace, data: PreparedData, use_dev_cv: bool) -> T
         data.model_names,
         args.device,
         baseline=args.mlp_contrib_baseline,
+        loss_mode=args.mlp_loss,
+        num_classes=args.num_classes,
     )
     contrib["split"] = args.contrib_split
     return dev_preds, test_preds, meta, contrib
