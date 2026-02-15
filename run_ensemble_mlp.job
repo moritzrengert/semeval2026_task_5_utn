@@ -211,7 +211,7 @@ def run_ensemble(mode: str, params: dict, run_name: str, extra_args=None):
 
     cmd = [
         "python3",
-        "ensemble.py",
+        "src/ensemble/ensemble.py",
         "--dev-preds",
         *DEV_PREDS,
         "--test-preds",

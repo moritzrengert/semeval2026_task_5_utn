@@ -9,12 +9,20 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence, Union
 
 
+def _numeric_sort_keys(keys: Sequence[str]) -> List[str]:
+    try:
+        return sorted(keys, key=lambda k: int(k))
+    except Exception:
+        return sorted(keys)
+
+
 def load_dataset(path: Union[str, Path]) -> List[Dict[str, Any]]:
     """Load a SemEval JSON dataset file."""
     with open(path, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
     if isinstance(payload, dict):
-        return list(payload.values())
+        keys = _numeric_sort_keys(list(payload.keys()))
+        return [payload[k] for k in keys]
     if isinstance(payload, list):
         return payload
     raise ValueError(f"Unsupported dataset format at {path}")

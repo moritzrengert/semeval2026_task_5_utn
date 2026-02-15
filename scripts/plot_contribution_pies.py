@@ -1,39 +1,10 @@
-#!/usr/bin/env python3
 """Create pie charts for ensemble contribution JSON outputs."""
 
-import argparse
 import json
 from pathlib import Path
 from typing import List, Tuple
 
 import matplotlib.pyplot as plt
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Plot pie charts for MLP and weighted-average model contributions."
-    )
-    parser.add_argument(
-        "--mlp-json",
-        type=str,
-        default="predictions/ensemble_sweep_runs/contrib_mlp_best.json",
-        help="Path to the MLP contribution JSON.",
-    )
-    parser.add_argument(
-        "--weighted-json",
-        type=str,
-        default="predictions/ensemble_sweep_runs/contrib_weighted_best.json",
-        help="Path to the weighted-average contribution JSON.",
-    )
-    parser.add_argument(
-        "--out-dir",
-        type=str,
-        default="predictions/ensemble_sweep_runs",
-        help="Output directory for the pie chart PNG files.",
-    )
-    parser.add_argument("--dpi", type=int, default=220, help="Image DPI.")
-    return parser.parse_args()
-
 
 def load_shares(path: Path) -> Tuple[str, List[str], List[float]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -95,11 +66,9 @@ def plot_pie(method: str, labels: List[str], values: List[float], out_path: Path
 
 
 def main() -> None:
-    args = parse_args()
-
-    mlp_path = Path(args.mlp_json)
-    weighted_path = Path(args.weighted_json)
-    out_dir = Path(args.out_dir)
+    mlp_path = Path("predictions/ensemble_sweep_runs/contrib_mlp_best.json")
+    weighted_path = Path("predictions/ensemble_sweep_runs/contrib_weighted_best.json")
+    out_dir = Path("predictions/ensemble_sweep_runs")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     mlp_method, mlp_labels, mlp_values = load_shares(mlp_path)
@@ -108,8 +77,8 @@ def main() -> None:
     mlp_out = out_dir / "contrib_mlp_best_pie.png"
     weighted_out = out_dir / "contrib_weighted_best_pie.png"
 
-    plot_pie(mlp_method, mlp_labels, mlp_values, mlp_out, args.dpi)
-    plot_pie(w_method, w_labels, w_values, weighted_out, args.dpi)
+    plot_pie(mlp_method, mlp_labels, mlp_values, mlp_out, 220)
+    plot_pie(w_method, w_labels, w_values, weighted_out, 220)
 
     print(f"Saved: {mlp_out}")
     print(f"Saved: {weighted_out}")
