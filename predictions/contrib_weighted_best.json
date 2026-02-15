@@ -4,45 +4,45 @@
   "by_model": [
     {
       "model": "ares",
-      "weight": 0.1688392609357834,
-      "mean_signed_contribution": 0.526530385017395,
-      "mean_abs_contribution": 0.526530385017395,
-      "abs_share": 0.1635257452726364
+      "weight": 0.16920402646064758,
+      "mean_signed_contribution": 0.527668297290802,
+      "mean_abs_contribution": 0.527668297290802,
+      "abs_share": 0.1641310155391693
     },
     {
       "model": "lmms",
-      "weight": 0.16726277768611908,
-      "mean_signed_contribution": 0.5112224221229553,
-      "mean_abs_contribution": 0.5112224221229553,
-      "abs_share": 0.15877151489257812
+      "weight": 0.16563798487186432,
+      "mean_signed_contribution": 0.5062565207481384,
+      "mean_abs_contribution": 0.5062565207481384,
+      "abs_share": 0.15747089684009552
     },
     {
       "model": "nli",
-      "weight": 0.054469287395477295,
-      "mean_signed_contribution": 0.1796729564666748,
-      "mean_abs_contribution": 0.1796729564666748,
-      "abs_share": 0.05580144003033638
+      "weight": 0.05527457967400551,
+      "mean_signed_contribution": 0.17815044522285461,
+      "mean_abs_contribution": 0.17815044522285461,
+      "abs_share": 0.0554136261343956
     },
     {
       "model": "sbert",
-      "weight": 0.03698814660310745,
-      "mean_signed_contribution": 0.11642039567232132,
-      "mean_abs_contribution": 0.11642039567232132,
-      "abs_share": 0.036156944930553436
+      "weight": 0.0460955835878849,
+      "mean_signed_contribution": 0.14102435111999512,
+      "mean_abs_contribution": 0.14102435111999512,
+      "abs_share": 0.043865568935871124
     },
     {
       "model": "sensembert",
-      "weight": 0.19353461265563965,
-      "mean_signed_contribution": 0.5691904425621033,
-      "mean_abs_contribution": 0.5691904425621033,
-      "abs_share": 0.1767747700214386
+      "weight": 0.1825413703918457,
+      "mean_signed_contribution": 0.5368601083755493,
+      "mean_abs_contribution": 0.5368601083755493,
+      "abs_share": 0.16699013113975525
     },
     {
       "model": "stsbert",
-      "weight": 0.37890592217445374,
-      "mean_signed_contribution": 1.3168258666992188,
-      "mean_abs_contribution": 1.3168258666992188,
-      "abs_share": 0.40896961092948914
+      "weight": 0.3812464475631714,
+      "mean_signed_contribution": 1.324961543083191,
+      "mean_abs_contribution": 1.324961543083191,
+      "abs_share": 0.4121287763118744
     }
   ],
   "split": "test"

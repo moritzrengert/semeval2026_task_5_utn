@@ -5,39 +5,39 @@
   "by_model": [
     {
       "model": "ares",
-      "mean_signed_delta": 0.005235483184937508,
-      "mean_abs_delta": 0.08369044552567184,
-      "abs_share": 0.20311969970520358
+      "mean_signed_delta": 0.007044204717041344,
+      "mean_abs_delta": 0.08517173938853766,
+      "abs_share": 0.21180755243361943
     },
     {
       "model": "lmms",
-      "mean_signed_delta": -0.007099209165060392,
-      "mean_abs_delta": 0.0854005717462109,
-      "abs_share": 0.20727023710755657
+      "mean_signed_delta": -0.006527034826176141,
+      "mean_abs_delta": 0.08484573018166326,
+      "abs_share": 0.21099682328009245
     },
     {
       "model": "nli",
-      "mean_signed_delta": 0.0027501963799999606,
-      "mean_abs_delta": 0.01397058694593368,
-      "abs_share": 0.03390711337882684
+      "mean_signed_delta": 0.0025486242386602584,
+      "mean_abs_delta": 0.013816435234521024,
+      "abs_share": 0.0343591119705999
     },
     {
       "model": "sbert",
-      "mean_signed_delta": 0.0025126716142059653,
-      "mean_abs_delta": 0.030642333594701622,
-      "abs_share": 0.07437003780931299
+      "mean_signed_delta": 0.0023954645279915102,
+      "mean_abs_delta": 0.027269111653809908,
+      "abs_share": 0.0678136179664527
     },
     {
       "model": "sensembert",
-      "mean_signed_delta": -0.013157054813959266,
-      "mean_abs_delta": 0.04058318535486857,
-      "abs_share": 0.09849683999869406
+      "mean_signed_delta": -0.013688780030896587,
+      "mean_abs_delta": 0.038211865963474395,
+      "abs_share": 0.09502637684459765
     },
     {
       "model": "stsbert",
-      "mean_signed_delta": -0.03272937433693999,
-      "mean_abs_delta": 0.15773812916971022,
-      "abs_share": 0.3828360720004059
+      "mean_signed_delta": -0.03649956910840926,
+      "mean_abs_delta": 0.15280363700723135,
+      "abs_share": 0.37999651750463787
     }
   ],
   "split": "test"
