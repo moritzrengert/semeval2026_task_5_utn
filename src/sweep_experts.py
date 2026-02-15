@@ -18,7 +18,7 @@ from typing import Dict, List, Sequence, Any, Tuple, Optional
 import re
 
 
-def cartesian(product_dict: Dict[str, Sequence]) -> List[Dict[str, any]]:
+def cartesian(product_dict: Dict[str, Sequence]) -> List[Dict[str, Any]]:
     keys = list(product_dict.keys())
     combos = []
     for values in itertools.product(*[product_dict[k] for k in keys]):
@@ -26,9 +26,9 @@ def cartesian(product_dict: Dict[str, Sequence]) -> List[Dict[str, any]]:
     return combos
 
 
-def merge_spaces(spaces: Sequence[Dict[str, Sequence]]) -> List[Dict[str, any]]:
+def merge_spaces(spaces: Sequence[Dict[str, Sequence]]) -> List[Dict[str, Any]]:
     """Expand and deduplicate multiple Cartesian product spaces."""
-    merged: List[Dict[str, any]] = []
+    merged: List[Dict[str, Any]] = []
     seen = set()
     for space in spaces:
         for cfg in cartesian(space):
@@ -222,7 +222,7 @@ def build_space(expert: str) -> List[Dict[str, Any]]:
     return merge_spaces(spaces)
 
 
-def sample_space(space: List[Dict[str, any]], max_trials: int, seed: int) -> List[Dict[str, any]]:
+def sample_space(space: List[Dict[str, Any]], max_trials: int, seed: int) -> List[Dict[str, Any]]:
     if max_trials <= 0 or len(space) <= max_trials:
         return space
     random.seed(seed)
@@ -313,7 +313,7 @@ def load_runtime_stats(path: Path) -> Dict[str, float]:
     return stats
 
 
-def estimate_trial_seconds(cfg: Dict[str, any], expert: str, stats: Dict[str, float], args: argparse.Namespace) -> float:
+def estimate_trial_seconds(cfg: Dict[str, Any], expert: str, stats: Dict[str, float], args: argparse.Namespace) -> float:
     expand = bool(cfg.get("expand_annotators", False))
     if expert == "sbert":
         est = stats["sbert_expand"] if expand else stats["sbert_base"]
@@ -337,13 +337,13 @@ def estimate_trial_seconds(cfg: Dict[str, any], expert: str, stats: Dict[str, fl
 
 
 def select_trials_for_budget(
-    trials: List[Dict[str, any]],
+    trials: List[Dict[str, Any]],
     expert: str,
     budget_seconds: float,
     stats: Dict[str, float],
     args: argparse.Namespace,
-) -> Tuple[List[Dict[str, any]], float]:
-    selected: List[Dict[str, any]] = []
+) -> Tuple[List[Dict[str, Any]], float]:
+    selected: List[Dict[str, Any]] = []
     used = 0.0
     for cfg in trials:
         est = estimate_trial_seconds(cfg, expert, stats, args)
@@ -419,7 +419,7 @@ def extract_best_dev_line(stdout: str) -> Tuple[str, Dict[str, str]]:
     return fallback_line, (fallback_match.groupdict() if fallback_match else {})
 
 
-def run_trial(idx: int, expert: str, cfg: Dict[str, any], base_args: argparse.Namespace, out_dir: Path) -> Dict[str, any]:
+def run_trial(idx: int, expert: str, cfg: Dict[str, Any], base_args: argparse.Namespace, out_dir: Path) -> Dict[str, Any]:
     save_path = out_dir / f"{expert}_trial{idx}.pt"
     log_path = out_dir / f"{expert}_trial{idx}.log"
     plot_path = out_dir / f"{expert}_trial{idx}.png"
@@ -638,14 +638,14 @@ def main():
     args.out_dir.mkdir(parents=True, exist_ok=True)
     best_summary_path = args.out_dir / "best_summary.json"
     persisted_best = load_best_summary(best_summary_path)
-    rows: List[Dict[str, any]] = []
+    rows: List[Dict[str, Any]] = []
     runtime_stats = load_runtime_stats(args.history_csv)
 
     budget_hours = infer_time_budget_hours(args)
     budget_enabled = budget_hours > 0
     hard_budget_seconds = max(0.0, budget_hours * 3600.0 - args.safety_minutes * 60.0) if budget_enabled else 0.0
 
-    planned_trials: Dict[str, List[Dict[str, any]]] = {}
+    planned_trials: Dict[str, List[Dict[str, Any]]] = {}
     planned_estimates: Dict[str, float] = {}
     estimated_totals: Dict[str, float] = {}
 

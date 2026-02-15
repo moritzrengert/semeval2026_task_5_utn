@@ -224,3 +224,4 @@ runs/*
 predictions/ensemble_sweep_runs/*
 *.pt
 *.pth
+scripts/
