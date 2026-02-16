@@ -1,4 +1,5 @@
-"""Custom Trainer with regression loss (same as cross_encoder_adam)."""
+"""Custom Trainer with regression loss (same as cross_encoder_adam).
+Created by Adam Jen Khai Lo."""
 
 import torch
 from transformers import Trainer

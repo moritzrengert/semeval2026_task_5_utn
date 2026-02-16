@@ -1,4 +1,5 @@
-"""Default config for cross-encoder expert (same as cross_encoder_adam)."""
+"""Default config for cross-encoder expert (same as cross_encoder_adam).
+Created by Adam Jen Khai Lo."""
 
 MODEL_NAME = "microsoft/deberta-v3-large"
 FROZEN_MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"

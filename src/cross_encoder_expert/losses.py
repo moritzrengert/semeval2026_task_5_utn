@@ -1,4 +1,5 @@
-"""Regression losses (same as cross_encoder_adam)."""
+"""Regression losses (same as cross_encoder_adam).
+Created by Adam Jen Khai Lo."""
 
 import torch
 from torch import nn

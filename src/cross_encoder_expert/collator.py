@@ -1,4 +1,5 @@
-"""Collator for cross-encoder (same as cross_encoder_adam)."""
+"""Collator for cross-encoder (same as cross_encoder_adam).
+Created by Adam Jen Khai Lo."""
 
 import torch
 import numpy as np

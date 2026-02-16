@@ -1,6 +1,7 @@
 """
 Train cross-encoder expert. Same data format/order as other experts (uses Moritz load_dataset).
 Run from repo root: python src/cross_encoder_expert/train.py --train-path ... --dev-path ... --save-path ...
+Created by Adam Jen Khai Lo.
 """
 
 from __future__ import annotations

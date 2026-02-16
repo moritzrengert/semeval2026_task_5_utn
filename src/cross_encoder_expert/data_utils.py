@@ -1,6 +1,7 @@
 """
 Data loading for cross-encoder expert.
 Uses Moritz's load_dataset for SemEval JSON; same text_a/text_b and frozen setup as cross_encoder_adam.
+Created by Adam Jen Khai Lo.
 """
 
 from __future__ import annotations

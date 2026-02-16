@@ -2,6 +2,7 @@
 Write dev and test prediction JSONs in the same format as other experts (for ensemble).
 Order matches load_dataset(train_path / dev_path / test_path).
 Run from repo root: python src/cross_encoder_expert/predict.py --checkpoint ... --dev-path ... --test-path ... --out-dev ... --out-test ...
+Created by Adam Jen Khai Lo.
 """
 
 from __future__ import annotations

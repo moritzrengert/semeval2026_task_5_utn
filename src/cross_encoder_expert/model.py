@@ -1,4 +1,5 @@
-"""Cross-Encoder model (same as cross_encoder_adam)."""
+"""Cross-Encoder model (same as cross_encoder_adam).
+Created by Adam Jen Khai Lo."""
 
 import torch
 from torch import nn
