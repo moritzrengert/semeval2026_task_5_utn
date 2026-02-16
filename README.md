@@ -1,6 +1,4 @@
 # SemEval 2026 Task 5 UTN
-
-## Short Project Description
 This repository contains an ensemble expert system for word sense prediction (SemEval 2026 Task 5).  
 It trains several base experts, exports their `dev`/`test` predictions, and combines them using ensemble methods.
 
@@ -20,9 +18,9 @@ Ensemble methods:
 
 
 ## Team Responsibilities
-- Moritz Rengert: core training/evaluation infrastructure, NLI and SBERT experts, ensemble framework (average/weighted/MLP), shared utilities.
-- Noas Shaalan: ARES/LMMS/SensEmBERT feature pipelines and CORAL MLP experts, linear-regression ensemble component.
-- Adam Jen Khai Lo: cross-encoder expert implementation (`src/cross_encoder_expert/`).
+- **Noas Shaalan**: ARES/LMMS/SensEmBERT feature pipelines and CORAL MLP experts, linear-regression ensemble component.
+- **Adam Jen Khai Lo**: cross-encoder expert implementation.
+- **Moritz Rengert**: training/evaluation infrastructure, NLI and SBERT experts, ensemble framework (average/weighted/MLP), shared utilities.
 
 
 ## Setup and Installation
@@ -87,7 +85,7 @@ To run:
 ## How to Run the Model
 Run from repository root.
 
-1. Train all base experts and write prediction JSON files:
+### 1. Train all base experts and write prediction JSON files:
 ```bash
 python3 train_all_experts.py
 ```
@@ -101,7 +99,7 @@ This writes:
 - `predictions/dev_preds_stsbert.json`
 - `predictions/test_preds_*.json` for the same models
 
-2. Train/evaluate all ensemble methods on those predictions:
+### 2. Train/evaluate all ensemble methods on those predictions:
 ```bash
 python3 train_all_ensembles.py
 ```
@@ -112,7 +110,7 @@ This runs `average`, `weighted`, `linear_regression`, and `mlp`, and writes:
 - `predictions/meta_<method>.json`
 - `predictions/contrib_<method>.json` (when available)
 
-3. Optional: run a single ensemble method directly:
+### 3. Optional: run a single ensemble method directly:
 ```bash
 python3 src/ensemble/ensemble.py --combine weighted --show-contributions
 ```
