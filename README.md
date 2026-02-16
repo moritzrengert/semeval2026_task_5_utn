@@ -21,6 +21,7 @@ Ensemble methods:
 - [Setup and Installation](#setup-and-installation)
 - [How to Run the Model](#how-to-run-the-model)
 - [Results & Evaluation](#results--evaluation)
+- [Insights](#insights)
 
 
 ## Team Responsibilities
@@ -175,8 +176,12 @@ Weighted and MLP contribution pies:
 ![MLP contribution pie](predictions/plots/contrib_mlp_best_pie.png)
 
 ### Insights
-1. As single experts, `ares` is the strongest by test Spearman (0.5040), but all base models remain clearly below the best ensembles.
-2. Ensembling gives a large gain in ranking quality: `average` reaches the best test Spearman (0.6199), about +0.116 absolute over the best base model.
-3. The best calibration/error profile is from `linear_regression` (best MAE 0.8076 and best Acc-within-SD 0.7269), even though its Spearman is slightly below `average`.
-4. Contribution analysis is consistent across methods: `stsbert` is the dominant signal (~38-41%), with `ares` and `lmms` as secondary contributors; `nli` and `sbert` have the smallest shares.
-5. Distribution plots show a remaining challenge: ensemble predictions are still narrower than the gold label distribution, so ranking improves strongly, but score spread/calibration can still be improved.
+1. As single experts, `ares` is the strongest by test Spearman (0.5040), but all experts perform worse than the ensemble.
+2. Ensembling mostly improves ranking quality: `average` reaches the best test Spearman (0.6199), about +0.116 absolute over the best expert.
+3. The best ensembling method is `linear_regression` (best MAE 0.8076 and best Acc-within-SD 0.7269), even though its Spearman is slightly below `average`.
+4. Contribution is consistent across methods: `stsbert` is the dominant signal (~38-41%), with `ares` and `lmms` as secondary contributors while `nli` and `sbert` have the smallest shares.
+5. Distribution plots show that ensemble predictions are still narrower than the gold label distribution, so ranking improves strongly, but score spread/calibration can still be improved.
+
+### Full Sweep Tables
+- NLI/SBERT expert sweep (full dump): [`NLI_SBERT_HYPERPARAM_SWEEP.md`](NLI_SBERT_HYPERPARAM_SWEEP.md)
+- Ensemble sweep (full dump): [`ENSEMBLE_HYPERPARAM_SWEEP.md`](ENSEMBLE_HYPERPARAM_SWEEP.md)
