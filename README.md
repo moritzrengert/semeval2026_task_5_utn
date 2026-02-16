@@ -16,6 +16,12 @@ Ensemble methods:
 - Linear regression
 - MLP
 
+## Table of Contents
+- [Team Responsibilities](#team-responsibilities)
+- [Setup and Installation](#setup-and-installation)
+- [How to Run the Model](#how-to-run-the-model)
+- [Results & Evaluation](#results--evaluation)
+
 
 ## Team Responsibilities
 - **Noas Shaalan**: ARES/LMMS/SensEmBERT feature pipelines and CORAL MLP experts, linear-regression ensemble component.
