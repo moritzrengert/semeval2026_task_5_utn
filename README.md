@@ -169,10 +169,6 @@ Gold vs ensemble test distributions (`average`, `weighted`, `mlp`):
 
 ![Gold vs ensemble test distributions](predictions/plots/test_distribution_compare_avg_weighted_mlp_vs_gold.png)
 
-Dev gold vs NLI/SBERT (why these two contribute less):
-
-![Dev gold vs NLI and SBERT](predictions/plots/dev_distribution_gold_vs_nli_sbert.png)
-
 Weighted and MLP contribution pies:
 
 ![Weighted contribution pie](predictions/plots/contrib_weighted_best_pie.png)
