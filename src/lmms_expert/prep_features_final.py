@@ -1,17 +1,31 @@
-"""Created by Noas Shaalan."""
+'''
+Created by Noas Shaalan,
 
-import json
+This script is used to prepare the training features for the LMMs expert model,
+
+BEFORE USING THIS SCRIPT
+1. You shouhld have the pre-trained vectors installed from https://figshare.com/articles/dataset/LMMS_2019_/21977219
+2. LMMs Context Features: must have been extracted using the prep_features_final.py script
+
+
+'''
+
 import os
+import sys
 import torch
 import numpy as np
-import re
-from tqdm import tqdm
 from transformers import BertTokenizer, BertModel
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import wordnet as wn
 
-# Configuration
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(SCRIPT_DIR)
+if PARENT_DIR not in sys.path:
+    sys.path.append(PARENT_DIR)
+
+from data_utils import load_dataset, expand_annotator_samples
+from expert_dataset import build_context
+
 BASE_DIR = '/home/finisher-pc/Documents/NLU_final'
 LMMS_FILE = os.path.join(BASE_DIR, 'lmms/lmms_2048.bert-large-cased.txt/lmms_2048.bert-large-cased.txt')
 DATA_DIR = os.path.join(BASE_DIR, 'ambistory-main')
@@ -22,40 +36,34 @@ OUTPUT_FILE = os.path.join(SCRIPT_DIR, 'lmms_context_features.pt')
 
 lemmatizer = WordNetLemmatizer()
 
-def load_data(filepath):
-    with open(filepath, 'r') as f:
-        return json.load(f)
-
-def get_required_sense_keys(datasets):
-    """
-    Function extracts the word sense keys from wordnet for each
-    homonym in the dataset
+def get_required_sense_keys(records):
+    """Identify judged meaning sense key from wordnet to extract.
+    input: records - list of records from the dataset
+    output: set of sense keys
     """
     required_keys = set()
-    for ds in datasets:
-        for entry in ds.values():
-            homonym = entry.get('homonym', '').lower()
-            if not homonym:
-                continue
-            for synset in wn.synsets(homonym):
-                for lemma in synset.lemmas():
-                    required_keys.add(lemma.key())
+    for entry in records:
+        homonym = entry.get('homonym', '').lower()
+        if not homonym:
+            continue
+        for synset in wn.synsets(homonym):
+            for lemma in synset.lemmas():
+                required_keys.add(lemma.key())
     return required_keys
 
 def load_lmms_vectors(filepath, required_keys):
-    """
-    Function loads the vectors from lmms file using
-    the required word sense keys from our homonyms
+    """Load only necessary LMMS vectors into memory for features extraction.
+    input: filepath - path to the LMMS vectors file
+    output: dictionary of sense keys to vectors
     """
     vectors = {} 
     with open(filepath, 'r', encoding='utf-8') as f:
-        # Check for numeric header and skip if present
         first_line = f.readline()
         parts = first_line.strip().split(' ')
         if not (len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit()):
             f.seek(0)
             
-        for line in tqdm(f):
+        for line in f:
             parts = line.split(' ')
             key = parts[0]
             if key in required_keys:
@@ -64,13 +72,13 @@ def load_lmms_vectors(filepath, required_keys):
                     vectors[key] = vec
                 except ValueError:
                     continue
-                    
     print(f"Loaded {len(vectors)} vectors from LMMS")
     return vectors
 
 def find_matching_sense_vector(homonym, judged_meaning, vectors):
-    """
-    Function finds the synset by matching its definition and return the existing sense vector
+    """Find the sense key (from wordnet) matching the judged definition string in lmms vectors
+    input: homonym - the word to find the sense key for
+    output: sense key
     """
     meaning_norm = judged_meaning.lower().strip()
     synsets = wn.synsets(homonym.lower())
@@ -82,18 +90,19 @@ def find_matching_sense_vector(homonym, judged_meaning, vectors):
             for lemma in synset.lemmas():
                 if lemma.key() in vectors:
                     return vectors[lemma.key()]
-                    
     return None
 
 def get_bert_embedding(text, target_word, tokenizer, model, device):
-    """Function Uses same BERT model as LMMS to embed the context from dataset"""
+    """Extract BERT embedding for the target word in context.
+    input: text - context sentence
+    output: BERT embedding
+    """
     inputs = tokenizer(text, return_tensors='pt', truncation=True, max_length=512).to(device)
     input_ids = inputs['input_ids'][0]
     
     for word in [target_word, target_word.lower()]:
         target_ids = tokenizer.encode(word, add_special_tokens=False)
-        if not target_ids: 
-            continue
+        if not target_ids: continue
         
         matches = (input_ids == target_ids[0]).nonzero(as_tuple=True)[0]
         if len(matches) > 0:
@@ -104,8 +113,10 @@ def get_bert_embedding(text, target_word, tokenizer, model, device):
     return None
 
 def create_features(u, v):
-    """Constructures features (concat, product, abs difference) use to train MLP"""
-    # Double (BERT-Large 1024) dimensons to match LMMS (2048)
+    """Combine context and sense vectors into feature vector for training.
+    input: u - BERT embedding
+    output: feature vector
+    """
     if len(u) == 1024:
         u = np.concatenate([u, u])
         
@@ -114,17 +125,19 @@ def create_features(u, v):
     diff = np.abs(u - v)
     return np.concatenate([concat, product, diff])
 
-def extract_features(dataset, vectors, tokenizer, model, device, explode_choices=False):
-    """Extracts features from the dataset for training MLP"""
+def extract_features(records, vectors, tokenizer, model, device):
+    """Generate features for all samples in our dataset.
+    input: records - list of records from the dataset
+    output: features - list of feature vectors
+    labels - list of labels
+    """
     features, labels = [], []
     model.eval()
     
-    for entry in tqdm(dataset.values()):
-        if 'sentence' not in entry or 'homonym' not in entry: 
-            continue
+    for entry in records:
+        if 'sentence' not in entry or 'homonym' not in entry: continue
             
-        context = f"{entry.get('precontext', '')} {entry['sentence']} {entry.get('ending', '')}".strip()
-        ratings = [float(c) for c in entry['choices']] if (explode_choices and 'choices' in entry) else [float(entry.get('average', 0.0))]
+        context = build_context(entry)
         
         target_vec = find_matching_sense_vector(entry['homonym'], entry.get('judged_meaning', ''), vectors)
         bert_emb = get_bert_embedding(context, entry['homonym'], tokenizer, model, device)
@@ -134,38 +147,38 @@ def extract_features(dataset, vectors, tokenizer, model, device, explode_choices
         else:
             rich_vec = np.zeros(8192, dtype=np.float32)
             
-        for r in ratings:
-            features.append(rich_vec)
-            labels.append(r)
+        features.append(rich_vec)
+        labels.append(float(entry.get('average', 0.0)))
         
     return np.array(features), np.array(labels)
 
 def main():
-    print("Loading datasets...")
-    dev_data = load_data(DEV_FILE)
-    train_data = load_data(TRAIN_FILE)
-    test_data = load_data(TEST_FILE)
+    dev_records = load_dataset(DEV_FILE)
+    train_records = load_dataset(TRAIN_FILE)
+    test_records = load_dataset(TEST_FILE)
     
-    # get wordnet sense keys from datasets
-    required_keys = get_required_sense_keys([dev_data, train_data, test_data])
+    train_records_expanded = expand_annotator_samples(train_records, label_key='average', choices_key='choices')
     
-    # Load LMMS
+    required_keys = get_required_sense_keys(dev_records + train_records + test_records)
+    print(f"Identified {len(required_keys)} target sense keys.")
+    
     vectors = load_lmms_vectors(LMMS_FILE, required_keys)
     
-    # Setup BERT
+    print("Loading BERT-Large-Cased...")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     tokenizer = BertTokenizer.from_pretrained('bert-large-cased')
     model = BertModel.from_pretrained('bert-large-cased').to(device)
     
-    print("Extracting features from Train Set")
-    train_feats, train_labels = extract_features(train_data, vectors, tokenizer, model, device, explode_choices=True)
+    print(f"Extracting [Train] features ({len(train_records_expanded)} samples)...")
+    train_feats, train_labels = extract_features(train_records_expanded, vectors, tokenizer, model, device)
     
-    print("Extracting features from Dev Set")
-    dev_feats, dev_labels = extract_features(dev_data, vectors, tokenizer, model, device, explode_choices=False)
+    print(f"Extracting [Dev] features ({len(dev_records)} samples)...")
+    dev_feats, dev_labels = extract_features(dev_records, vectors, tokenizer, model, device)
 
-    print("Extracting features from Test Set")
-    test_feats, test_labels = extract_features(test_data, vectors, tokenizer, model, device, explode_choices=False)
+    print(f"Extracting [Test] features ({len(test_records)} samples)...")
+    test_feats, test_labels = extract_features(test_records, vectors, tokenizer, model, device)
     
+    print(f"Saving features to {OUTPUT_FILE}...")
     torch.save({
         'train_features': torch.tensor(train_feats, dtype=torch.float32),
         'train_labels': torch.tensor(train_labels, dtype=torch.float32),
@@ -174,6 +187,6 @@ def main():
         'test_features': torch.tensor(test_feats, dtype=torch.float32),
         'test_labels': torch.tensor(test_labels, dtype=torch.float32)
     }, OUTPUT_FILE)
-    
+
 if __name__ == "__main__":
     main()

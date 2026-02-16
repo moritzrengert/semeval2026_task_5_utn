@@ -1,4 +1,14 @@
-"""Created by Noas Shaalan."""
+'''
+Created by Noas Shaalan,
+
+This script is used to train the MLP model for the SensEmBERT expert,
+
+BEFORE USING THIS SCRIPT
+1. SensEmBERT Context Features: must have been extracted using the prep_features_final.py script
+2. You shouhld have the pre-trained vectors installed from sapeinza NLP lab: https://nlp.uniroma1.it/sensembert/
+
+
+'''
 
 import torch
 import torch.nn as nn
@@ -8,6 +18,7 @@ import numpy as np
 import os
 import sys
 import json
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PARENT_DIR = os.path.dirname(SCRIPT_DIR)
 sys.path.append(PARENT_DIR)
@@ -18,7 +29,6 @@ from losses import coral_loss
 BASE_DIR = '/home/finisher-pc/Documents/NLU_final'
 FEATURES_FILE = os.path.join(SCRIPT_DIR, 'sensembert_context_features.pt')
 MODEL_SAVE_PATH = os.path.join(SCRIPT_DIR, 'sensembert_coral_model.pth')
-DEV_JSON = os.path.join(BASE_DIR, 'ambistory-main/dev.json')
 
 HYPERPARAMS = {
     'batch_size': 32,
@@ -42,8 +52,6 @@ def run_epoch(model, loader, optimizer, device, is_training=True):
             if is_training: optimizer.zero_grad()
             
             logits = model(x)
-            
-            # Use imported loss - shift y to 0-based
             loss = coral_loss(logits, y - 1.0, num_classes=HYPERPARAMS['num_classes'], reduction='sum')
             
             if is_training:
@@ -52,22 +60,19 @@ def run_epoch(model, loader, optimizer, device, is_training=True):
             
             running_loss += loss.item()
             
-    epoch_loss = running_loss / len(loader.dataset)
-    return epoch_loss
+    return running_loss / len(loader.dataset)
 
 def main():
     if not os.path.exists(FEATURES_FILE):
-        print(f"Error: {FEATURES_FILE} not found.")
+        print(f"Error: {FEATURES_FILE} not found. Run prep_features_final.py first.")
         return
 
     data = torch.load(FEATURES_FILE)
     train_x, train_y = data['train_features'], data['train_labels']
     dev_x, dev_y = data['dev_features'], data['dev_labels']
     
-    # Round labels and clamp 1-5
     train_y = torch.clamp(torch.round(train_y), 1.0, 5.0)
 
-    # Normalization
     mean, std = train_x.mean(dim=0), train_x.std(dim=0)
     std[std == 0] = 1.0
     train_x = (train_x - mean) / std
@@ -77,8 +82,6 @@ def main():
     dev_loader = DataLoader(TensorDataset(dev_x, dev_y), batch_size=HYPERPARAMS['batch_size'])
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # Use Imported CoralHead
     model = CoralHead(
         input_dim=train_x.shape[1], 
         num_classes=HYPERPARAMS['num_classes'],
@@ -90,7 +93,7 @@ def main():
     
     best_val_loss = float('inf')
     
-    print(f"Training CORAL Model on {device}")
+    print(f"Training SensEmBERT expert on {device}...")
     for epoch in range(HYPERPARAMS['epochs']):
         train_loss = run_epoch(model, train_loader, optimizer, device, is_training=True)
         dev_loss = run_epoch(model, dev_loader, None, device, is_training=False)
@@ -105,7 +108,7 @@ def main():
         print(f"Epoch {epoch+1:2d} | Train Loss: {train_loss:.4f} | Dev Loss: {dev_loss:.4f} {status}")
             
     print(f"\nTraining finished. Best Dev Loss: {best_val_loss:.4f}")
-    print(f"Model: {MODEL_SAVE_PATH}")
+    print(f"Model saved to: {MODEL_SAVE_PATH}")
 
 if __name__ == "__main__":
     main()
