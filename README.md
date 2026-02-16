@@ -50,7 +50,7 @@ pip install -r requirements.txt
 
 <details>
   <summary>If missing, generate them using these instructions:</summary>
-This applies only to the expert models for ARES, LMMS, and SensEmBERT.
+> ⚠️ **This applies only to the expert models for ARES, LMMS, and SensEmBERT.**
 
 Note: We have provided the extracted features as .pt files. However, in order to recreate these features, you must first download the pre-trained vectors from the sources listed below.
 
@@ -114,3 +114,67 @@ This runs `average`, `weighted`, `linear_regression`, and `mlp`, and writes:
 ```bash
 python3 src/ensemble/ensemble.py --combine weighted --show-contributions
 ```
+
+## Results & Evaluation
+The numbers below are computed on:
+- Dev: `semeval26-05-scripts/data/dev.json` (`n=588`)
+- Test: `semeval26-05-scripts/data/test.json` (`n=930`)
+
+Reported metrics:
+- `Spearman` (rank correlation, higher is better)
+- `MAE` (mean absolute error, lower is better)
+- `Acc-within-SD` (prediction within human mean +/- std or within +/- 1.0, higher is better)
+
+### Base Experts (Test)
+| Model | Spearman | MAE | Acc-within-SD |
+|---|---:|---:|---:|
+| `ares` | 0.5040 | 0.8756 | 0.6763 |
+| `sensembert` | 0.4855 | 0.9215 | 0.6258 |
+| `stsbert` | 0.4627 | 0.9436 | 0.6796 |
+| `lmms` | 0.4492 | 0.9093 | 0.6376 |
+| `nli` | 0.2500 | 1.0052 | 0.5548 |
+| `sbert` | 0.1877 | 1.0330 | 0.5570 |
+
+### Ensemble Comparison
+| Ensemble | Dev Spearman | Test Spearman | Test MAE | Test Acc-within-SD |
+|---|---:|---:|---:|---:|
+| `average` (`predictions/test_preds_ensemble_average.json`) | 0.5725 | **0.6199** | 0.8731 | 0.6172 |
+| `linear_regression` (`predictions/test_preds_ensemble_linear_regression.json`) | **0.5844** | 0.6052 | **0.8076** | **0.7269** |
+| `mlp` sweep-best (`predictions/ensemble_sweep_runs/test_mlp_06.json`) | 0.5631 | 0.6014 | 0.9190 | 0.6022 |
+| `weighted` sweep-best (`predictions/ensemble_sweep_runs/test_weighted_12.json`) | 0.5739 | 0.5960 | 0.8378 | 0.6753 |
+| `mlp coral+mse` sweep-best (`predictions/ensemble_sweep_runs/test_mlp_coral_mse_04.json`) | 0.5467 | 0.5496 | 0.8452 | 0.6946 |
+
+### Contribution Shares (Test, |contribution|)
+| Model | Weighted (best) | MLP (best) | MLP CORAL+MSE (best) |
+|---|---:|---:|---:|
+| `ares` | 16.4% | 21.2% | 20.5% |
+| `lmms` | 15.7% | 21.1% | 9.9% |
+| `nli` | 5.5% | 3.4% | 7.5% |
+| `sbert` | 4.4% | 6.8% | 14.6% |
+| `sensembert` | 16.7% | 9.5% | 6.5% |
+| `stsbert` | 41.2% | 38.0% | 41.1% |
+
+### Key Figures
+Base-model test distributions:
+
+![Base model test distributions](predictions/plots/base_models_test_smooth_distribution.png)
+
+Gold vs ensemble test distributions (`average`, `weighted`, `mlp`):
+
+![Gold vs ensemble test distributions](predictions/plots/test_distribution_compare_avg_weighted_mlp_vs_gold.png)
+
+Dev gold vs NLI/SBERT (why these two contribute less):
+
+![Dev gold vs NLI and SBERT](predictions/plots/dev_distribution_gold_vs_nli_sbert.png)
+
+Weighted and MLP contribution pies:
+
+![Weighted contribution pie](predictions/plots/contrib_weighted_best_pie.png)
+![MLP contribution pie](predictions/plots/contrib_mlp_best_pie.png)
+
+### Insights
+1. As single experts, `ares` is the strongest by test Spearman (0.5040), but all base models remain clearly below the best ensembles.
+2. Ensembling gives a large gain in ranking quality: `average` reaches the best test Spearman (0.6199), about +0.116 absolute over the best base model.
+3. The best calibration/error profile is from `linear_regression` (best MAE 0.8076 and best Acc-within-SD 0.7269), even though its Spearman is slightly below `average`.
+4. Contribution analysis is consistent across methods: `stsbert` is the dominant signal (~38-41%), with `ares` and `lmms` as secondary contributors; `nli` and `sbert` have the smallest shares.
+5. Distribution plots show a remaining challenge: ensemble predictions are still narrower than the gold label distribution, so ranking improves strongly, but score spread/calibration can still be improved.
