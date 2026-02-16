@@ -1,4 +1,5 @@
-"""Text helpers specific to the NLI expert."""
+"""Text helpers specific to the NLI expert.
+Created by Moritz Rengert."""
 
 from __future__ import annotations
 

@@ -1,0 +1,118 @@
+{
+  "combine": "linear_regression",
+  "model_names": [
+    "ares",
+    "lmms",
+    "nli",
+    "sbert",
+    "sensembert",
+    "stsbert"
+  ],
+  "dev_pred_files": [
+    "predictions/dev_preds_ares.json",
+    "predictions/dev_preds_lmms.json",
+    "predictions/dev_preds_nli.json",
+    "predictions/dev_preds_sbert.json",
+    "predictions/dev_preds_sensembert.json",
+    "predictions/dev_preds_stsbert.json"
+  ],
+  "test_pred_files": [
+    "predictions/test_preds_ares.json",
+    "predictions/test_preds_lmms.json",
+    "predictions/test_preds_nli.json",
+    "predictions/test_preds_sbert.json",
+    "predictions/test_preds_sensembert.json",
+    "predictions/test_preds_stsbert.json"
+  ],
+  "fixed_best_configs": {
+    "weighted": {
+      "epochs": 1800,
+      "lr": 0.05,
+      "l2": 0.001
+    },
+    "linear_regression": {
+      "fit_intercept": true
+    },
+    "mlp": {
+      "hidden_dim": 16,
+      "dropout": 0.1,
+      "lr": 0.0005,
+      "weight_decay": 0.001,
+      "loss": "mse",
+      "coral_weight": 1.0,
+      "mse_weight": 1.0,
+      "epochs": 350,
+      "batch_size": 64,
+      "patience": 40,
+      "progress_every": 25
+    }
+  },
+  "weights": [
+    0.15217559039592743,
+    0.3286728262901306,
+    0.24028858542442322,
+    0.004716686904430389,
+    0.39072391390800476,
+    0.4393167495727539
+  ],
+  "intercept": -1.878432273864746,
+  "linear_regression_info": {
+    "source": "fixed_best",
+    "fixed_config": {
+      "fit_intercept": true
+    },
+    "fit_intercept": true,
+    "train_mse": 0.9303138206443554,
+    "n_train": 588
+  },
+  "contributions": {
+    "method": "linear_regression",
+    "intercept": -1.878432273864746,
+    "n_samples": 930,
+    "by_model": [
+      {
+        "model": "ares",
+        "weight": 0.15217559039592743,
+        "mean_signed_contribution": 0.4745646119117737,
+        "mean_abs_contribution": 0.4745646119117737,
+        "abs_share": 0.09598969668149948
+      },
+      {
+        "model": "lmms",
+        "weight": 0.3286728262901306,
+        "mean_signed_contribution": 1.0045565366744995,
+        "mean_abs_contribution": 1.0045565366744995,
+        "abs_share": 0.2031906098127365
+      },
+      {
+        "model": "nli",
+        "weight": 0.24028858542442322,
+        "mean_signed_contribution": 0.7744523286819458,
+        "mean_abs_contribution": 0.7744523286819458,
+        "abs_share": 0.1566476821899414
+      },
+      {
+        "model": "sbert",
+        "weight": 0.004716686904430389,
+        "mean_signed_contribution": 0.01443017739802599,
+        "mean_abs_contribution": 0.01443017739802599,
+        "abs_share": 0.0029187770560383797
+      },
+      {
+        "model": "sensembert",
+        "weight": 0.39072391390800476,
+        "mean_signed_contribution": 1.149132251739502,
+        "mean_abs_contribution": 1.149132251739502,
+        "abs_share": 0.23243379592895508
+      },
+      {
+        "model": "stsbert",
+        "weight": 0.4393167495727539,
+        "mean_signed_contribution": 1.5267761945724487,
+        "mean_abs_contribution": 1.5267761945724487,
+        "abs_share": 0.308819442987442
+      }
+    ],
+    "split": "test"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "combine": "average",
+  "model_names": [
+    "ares",
+    "lmms",
+    "nli",
+    "sbert",
+    "sensembert",
+    "stsbert"
+  ],
+  "dev_pred_files": [
+    "predictions/dev_preds_ares.json",
+    "predictions/dev_preds_lmms.json",
+    "predictions/dev_preds_nli.json",
+    "predictions/dev_preds_sbert.json",
+    "predictions/dev_preds_sensembert.json",
+    "predictions/dev_preds_stsbert.json"
+  ],
+  "test_pred_files": [
+    "predictions/test_preds_ares.json",
+    "predictions/test_preds_lmms.json",
+    "predictions/test_preds_nli.json",
+    "predictions/test_preds_sbert.json",
+    "predictions/test_preds_sensembert.json",
+    "predictions/test_preds_stsbert.json"
+  ],
+  "fixed_best_configs": {
+    "weighted": {
+      "epochs": 1800,
+      "lr": 0.05,
+      "l2": 0.001
+    },
+    "linear_regression": {
+      "fit_intercept": true
+    },
+    "mlp": {
+      "hidden_dim": 16,
+      "dropout": 0.1,
+      "lr": 0.0005,
+      "weight_decay": 0.001,
+      "loss": "mse",
+      "coral_weight": 1.0,
+      "mse_weight": 1.0,
+      "epochs": 350,
+      "batch_size": 64,
+      "patience": 40,
+      "progress_every": 25
+    }
+  },
+  "weights": [
+    0.16666666666666666,
+    0.16666666666666666,
+    0.16666666666666666,
+    0.16666666666666666,
+    0.16666666666666666,
+    0.16666666666666666
+  ]
+}

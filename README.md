@@ -2,11 +2,120 @@
 
 ```bash
 git clone --recurse-submodules git@github.com:moritzrengert/semeval2026_task_5_utn.git
+cd semeval2026_task_5_utn
+git submodule update --init --recursive
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## Ensemble Ablation Study (Job 3344028)
+## Run the Ensemble Locally
 
-Source: `predictions/ensemble_sweep_runs/summary.json` (test metrics, `n=930`).
+Run commands from the repository root.
+
+### 1) Define base prediction files (tracked in `predictions/`)
+
+```bash
+DEV_PREDS=(
+  predictions/dev_preds_ares.json
+  predictions/dev_preds_lmms.json
+  predictions/dev_preds_nli.json
+  predictions/dev_preds_sbert.json
+  predictions/dev_preds_sensembert.json
+  predictions/dev_preds_stsbert.json
+)
+
+TEST_PREDS=(
+  predictions/test_preds_ares.json
+  predictions/test_preds_lmms.json
+  predictions/test_preds_nli.json
+  predictions/test_preds_sbert.json
+  predictions/test_preds_sensembert.json
+  predictions/test_preds_stsbert.json
+)
+```
+
+### 2) Run average baseline
+
+```bash
+python3 src/ensemble/ensemble.py \
+  --combine average \
+  --dev-preds "${DEV_PREDS[@]}" \
+  --test-preds "${TEST_PREDS[@]}" \
+  --dev-labels-path semeval26-05-scripts/data/dev.json \
+  --test-labels-path semeval26-05-scripts/data/test.json \
+  --show-split-metrics \
+  --out-dev predictions/dev_preds_ensemble_average.json \
+  --out-test predictions/test_preds_ensemble_average.json \
+  --save-meta predictions/meta_average.json
+```
+
+### 3) Run weighted ensemble (best config in current sweep)
+
+```bash
+python3 src/ensemble/ensemble.py \
+  --combine weighted \
+  --dev-preds "${DEV_PREDS[@]}" \
+  --test-preds "${TEST_PREDS[@]}" \
+  --dev-labels-path semeval26-05-scripts/data/dev.json \
+  --test-labels-path semeval26-05-scripts/data/test.json \
+  --weight-epochs 1800 \
+  --weight-lr 0.05 \
+  --weight-l2 0.001 \
+  --show-split-metrics \
+  --show-weights \
+  --save-contributions predictions/contrib_weighted_best.json \
+  --out-dev predictions/dev_preds_ensemble_best.json \
+  --out-test predictions/test_preds_ensemble_best.json \
+  --save-meta predictions/meta_weighted_best.json
+```
+
+### 4) Run MLP with CORAL ablation (`coral_mse`)
+
+```bash
+python3 src/ensemble/ensemble.py \
+  --combine mlp \
+  --dev-preds "${DEV_PREDS[@]}" \
+  --test-preds "${TEST_PREDS[@]}" \
+  --dev-labels-path semeval26-05-scripts/data/dev.json \
+  --test-labels-path semeval26-05-scripts/data/test.json \
+  --mlp-hidden-dim 16 \
+  --mlp-dropout 0.0 \
+  --mlp-lr 0.001 \
+  --mlp-weight-decay 0.001 \
+  --mlp-loss coral_mse \
+  --mlp-coral-weight 1.0 \
+  --mlp-mse-weight 0.1 \
+  --mlp-epochs 350 \
+  --mlp-batch-size 64 \
+  --mlp-patience 40 \
+  --mlp-progress-every 25 \
+  --show-split-metrics \
+  --save-contributions predictions/contrib_mlp_coral_best.json \
+  --out-dev predictions/dev_preds_ensemble_mlp.json \
+  --out-test predictions/test_preds_ensemble_mlp.json \
+  --save-meta predictions/meta_mlp_coral_best.json
+```
+
+### 5) Optional: train NLI/SBERT experts directly
+
+```bash
+# NLI expert
+python3 src/train_experts.py \
+  --expert nli \
+  --train-path semeval26-05-scripts/data/train.json \
+  --dev-path semeval26-05-scripts/data/dev.json \
+  --save-path runs/nli_best.pt
+
+# SBERT expert
+python3 src/train_experts.py \
+  --expert sbert \
+  --train-path semeval26-05-scripts/data/train.json \
+  --dev-path semeval26-05-scripts/data/dev.json \
+  --save-path runs/sbert_best.pt
+```
+
+## Ensemble Ablation Study
 
 `Combined = (Spearman + AccWithinSD) / 2`
 

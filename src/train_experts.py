@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from transformers import get_linear_schedule_with_warmup
 import matplotlib
@@ -17,7 +16,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from losses import coral_expected_value, coral_loss
+from losses import coral_expected_value, coral_loss, compute_soft_kl_loss
 from scipy.stats import spearmanr
 from nli_expert import NliExpertConfig, NliPlausibilityExpert, make_nli_collate_fn
 from sbert_expert import SbertExpertConfig, SbertSemanticMatchingExpert, make_sbert_collate_fn
@@ -26,6 +25,7 @@ from data_utils import expand_annotator_samples, load_dataset
 
 
 def move_to_device(batch: Dict[str, Any], device: torch.device) -> Dict[str, Any]:
+    """Transfer all items in the batch to the device."""
     def _move(item):
         if isinstance(item, torch.Tensor):
             return item.to(device)
@@ -37,6 +37,7 @@ def move_to_device(batch: Dict[str, Any], device: torch.device) -> Dict[str, Any
 
 
 def resolve_device(requested_device: str | None) -> torch.device:
+    """Select the available device."""
     if requested_device:
         return torch.device(requested_device)
     if torch.cuda.is_available():
@@ -47,6 +48,7 @@ def resolve_device(requested_device: str | None) -> torch.device:
 
 
 def forward_batch(model: torch.nn.Module, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+    """ Handle different input formats for NLI vs SBERT experts."""
     if "context_ids" in batch:
         return model(
             batch["context_ids"],
@@ -57,49 +59,14 @@ def forward_batch(model: torch.nn.Module, batch: Dict[str, Any]) -> Dict[str, to
     return model(batch["input_ids"], batch["attention_mask"])
 
 
-def compute_soft_kl_loss(
-    class_logits: torch.Tensor | None,
-    soft_targets: torch.Tensor | None,
-    soft_mask: torch.Tensor | None,
-) -> Tuple[torch.Tensor | None, int]:
-    if class_logits is None or soft_targets is None or soft_mask is None or not soft_mask.any():
-        return None, 0
-    active = soft_mask.bool()
-    kl = F.kl_div(
-        F.log_softmax(class_logits[active], dim=-1),
-        soft_targets[active],
-        reduction="batchmean",
-    )
-    return kl, int(active.sum().item())
-
-
-def build_expert(
-    args: argparse.Namespace,
-) -> Tuple[torch.nn.Module, Any, str]:
-    default_nli_model = NliExpertConfig().model_name
-    default_sbert_model = SbertExpertConfig().model_name
+def build_expert(args: argparse.Namespace) -> Tuple[torch.nn.Module, Any, str]:
     if args.expert == "nli":
-        config = NliExpertConfig(
-            model_name=args.model_name or default_nli_model,
-            num_classes=args.num_classes,
-            dropout=args.dropout,
-            hidden_dim=args.hidden_dim,
-            max_length=args.max_length,
-            pooling=args.pooling,
-            projector_dim=args.projector_dim,
-        )
+        config: NliExpertConfig = args.expert_config
         model = NliPlausibilityExpert(config)
         collate = make_nli_collate_fn(model.tokenizer, max_length=config.max_length, num_classes=config.num_classes)
         head = "nli"
     elif args.expert == "sbert":
-        config = SbertExpertConfig(
-            model_name=args.model_name or default_sbert_model,
-            num_classes=args.num_classes,
-            dropout=args.dropout,
-            hidden_dim=args.hidden_dim,
-            max_length=args.max_length,
-            projector_dim=args.projector_dim,
-        )
+        config: SbertExpertConfig = args.expert_config
         model = SbertSemanticMatchingExpert(config)
         collate = make_sbert_collate_fn(model.tokenizer, max_length=config.max_length, num_classes=config.num_classes)
         head = "sbert"
@@ -187,6 +154,7 @@ def evaluate(
     acc_sum = 0.0
     coral_sum = 0.0
     kl_sum = 0.0
+    kl_count = 0
     preds_all = []
     labels_all = []
     within_sd_correct = 0
@@ -207,9 +175,11 @@ def evaluate(
         soft_targets = batch.get("soft_targets")
         soft_mask = batch.get("soft_mask")
         kl, active_count = compute_soft_kl_loss(class_logits, soft_targets, soft_mask)
-        if kl is not None and soft_weight > 0:
+        if kl is not None:
             kl_sum += kl.item() * active_count
-            total_loss = total_loss + soft_weight * kl
+            kl_count += active_count
+            if soft_weight > 0:
+                total_loss = total_loss + soft_weight * kl
         coral_sum += coral.item() * batch["scores"].size(0)
         loss_sum += total_loss.item() * batch["scores"].size(0)
         acc_sum += (class_pred == batch["ordinal_labels"]).sum().item()
@@ -224,7 +194,7 @@ def evaluate(
                 if choices_mask[i].any():
                     vals = choices[i][choices_mask[i]].float()
                     mean = vals.mean().item()
-                    sd = vals.std(unbiased=False).item()
+                    sd = vals.std(unbiased=True).item() if vals.numel() > 1 else 0.0
                     within = (mean - sd) < preds[i].item() < (mean + sd)
                     within = within or abs(mean - preds[i].item()) < 1.0
                     within_sd_correct += 1 if within else 0
@@ -241,7 +211,7 @@ def evaluate(
         "mae": mae_sum / total,
         "acc": acc_sum / total,
         "coral": coral_sum / total,
-        "kl": kl_sum / total if total else 0.0,
+        "kl": kl_sum / kl_count if kl_count else 0.0,
         "spearman": spearman,
         "acc_within_sd": acc_within_sd,
     }
@@ -323,7 +293,9 @@ def train(args: argparse.Namespace) -> None:
                 if args.save_path:
                     save_path = Path(args.save_path)
                     save_path.parent.mkdir(parents=True, exist_ok=True)
-                    torch.save({"state_dict": model.state_dict(), "expert": expert_name}, save_path)
+                    state_to_save = ema_state if ema_state is not None else model.state_dict()
+                    cpu_state = {k: v.detach().cpu().clone() for k, v in state_to_save.items()}
+                    torch.save({"state_dict": cpu_state, "expert": expert_name}, save_path)
                     print(f"Saved {expert_name} weights to {save_path} (best dev loss).")
             else:
                 epochs_without_improve += 1
@@ -350,7 +322,9 @@ def train(args: argparse.Namespace) -> None:
     if args.save_path and not dev_loader:
         save_path = Path(args.save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save({"state_dict": model.state_dict(), "expert": expert_name}, save_path)
+        state_to_save = ema_state if ema_state is not None else model.state_dict()
+        cpu_state = {k: v.detach().cpu().clone() for k, v in state_to_save.items()}
+        torch.save({"state_dict": cpu_state, "expert": expert_name}, save_path)
         print(f"Saved {expert_name} weights to {save_path}")
 
     # Plot loss curves
@@ -371,45 +345,22 @@ def train(args: argparse.Namespace) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train frozen experts with CORAL heads.")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--expert", choices=["nli", "sbert"], default="nli")
     parser.add_argument("--train-path", type=str, default="semeval26-05-scripts/data/train.json")
     parser.add_argument("--dev-path", type=str, default="semeval26-05-scripts/data/dev.json")
     parser.add_argument("--label-key", type=str, default="average")
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--epochs", type=int, default=12)
-    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for heads.")
-    parser.add_argument("--encoder-lr", type=float, default=0.0, help="Learning rate for unfrozen encoder layers.")
-    parser.add_argument("--weight-decay", type=float, default=0.05)
-    parser.add_argument("--dropout", type=float, default=0.2)
-    parser.add_argument("--hidden-dim", type=int, default=256)
-    parser.add_argument("--max-length", type=int, default=256)
-    parser.add_argument("--num-classes", type=int, default=5)
-    parser.add_argument("--model-name", type=str, default=None, help="HF model to use for the chosen expert.")
-    parser.add_argument("--pooling", choices=["cls", "mean"], default="cls", help="Pooling for NLI expert.")
-    parser.add_argument("--coral-weight", type=float, default=1.0)
-    parser.add_argument("--mse-weight", type=float, default=0.0)
-    parser.add_argument("--warmup-ratio", type=float, default=0.06)
-    parser.add_argument("--max-grad-norm", type=float, default=1.0)
-    parser.add_argument("--train-encoder-layers", type=int, default=0, help="Unfreeze last N transformer layers; 0 keeps encoder frozen.")
-    parser.add_argument("--projector-dim", type=int, default=256, help="Dim of optional projection layer before CORAL head; 0 disables.")
-    parser.add_argument("--early-stop-patience", type=int, default=3)
-    parser.add_argument("--early-stop-delta", type=float, default=0.0)
-    parser.add_argument("--overfit-patience", type=int, default=2, help="Stop if train improves but dev worsens for this many epochs.")
-    parser.add_argument("--overfit-train-delta", type=float, default=0.01, help="Minimum train loss drop to count as improvement.")
-    parser.add_argument("--overfit-dev-delta", type=float, default=0.0, help="Dev loss must exceed best by this margin to signal overfit.")
+    parser.add_argument("--save-path", type=str, default=None)
     parser.add_argument("--plot-path", type=str, default="training_curve.png")
     parser.add_argument("--no-plot", action="store_true", help="Disable saving loss plot.")
-    parser.add_argument("--use-ema", action="store_true", help="Use EMA weights for eval.")
-    parser.add_argument("--ema-decay", type=float, default=0.999)
-    parser.add_argument("--soft-weight", type=float, default=0.0, help="Weight for soft-label KL loss; 0 disables.")
-    parser.add_argument("--expand-annotators", action="store_true", help="Use each annotator score as its own training sample.")
-    parser.add_argument("--target-aware", action="store_true", help="Mark the target homonym in text.",)
+    parser.add_argument("--target-aware", action="store_true", help="Mark the target homonym in text.")
     parser.add_argument("--device", type=str, default=None)
-    parser.add_argument("--log-every", type=int, default=20)
-    parser.add_argument("--save-path", type=str, default=None)
-    return parser.parse_args()
-
+    args = parser.parse_args()
+    config = NliExpertConfig() if args.expert == "nli" else SbertExpertConfig()
+    args.expert_config = config
+    for key, value in vars(config).items():
+        setattr(args, key, value)
+    return args
 
 if __name__ == "__main__":
     args = parse_args()

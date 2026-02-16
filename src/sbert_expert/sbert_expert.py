@@ -16,13 +16,35 @@ from coral_head import CoralHead
 
 @dataclass
 class SbertExpertConfig:
+    # Best settings from latest target-aware sweep (runs/sweep_target_aware_v3, trial 43).
     model_name: str = "sentence-transformers/all-mpnet-base-v2"
     num_classes: int = 5
-    dropout: float = 0.1
-    hidden_dim: int = 512
+    dropout: float = 0.3
+    hidden_dim: int = 256
     max_length: int = 256
     projector_dim: int = 256
     use_classifier: bool = True
+    # Training defaults
+    batch_size: int = 8
+    epochs: int = 10
+    lr: float = 1e-4
+    encoder_lr: float = 0.0
+    weight_decay: float = 0.03
+    warmup_ratio: float = 0.06
+    train_encoder_layers: int = 0
+    coral_weight: float = 1.0
+    mse_weight: float = 0.0
+    soft_weight: float = 0.0
+    max_grad_norm: float = 1.0
+    use_ema: bool = True
+    ema_decay: float = 0.999
+    early_stop_patience: int = 2
+    early_stop_delta: float = 0.0
+    overfit_patience: int = 2
+    overfit_train_delta: float = 0.01
+    overfit_dev_delta: float = 0.0
+    expand_annotators: bool = False
+    log_every: int = 20
 
 
 def mean_pool(hidden: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:

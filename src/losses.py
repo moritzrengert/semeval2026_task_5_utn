@@ -3,6 +3,7 @@ Created by Moritz Rengert.
 """
 
 from __future__ import annotations
+from typing import Tuple
 
 import torch
 import torch.nn.functional as F
@@ -30,3 +31,19 @@ def coral_expected_value(logits: torch.Tensor) -> torch.Tensor:
     """Map CORAL logits to an expected value."""
     probs = torch.sigmoid(logits)
     return probs.sum(dim=1)
+
+def compute_soft_kl_loss(
+    class_logits: torch.Tensor | None,
+    soft_targets: torch.Tensor | None,
+    soft_mask: torch.Tensor | None,
+) -> Tuple[torch.Tensor | None, int]:
+    """Compute KL divergence loss for soft targets, masked by soft_mask."""
+    if class_logits is None or soft_targets is None or soft_mask is None or not soft_mask.any():
+        return None, 0
+    active = soft_mask.bool()
+    kl = F.kl_div(
+        F.log_softmax(class_logits[active], dim=-1),
+        soft_targets[active],
+        reduction="batchmean",
+    )
+    return kl, int(active.sum().item())

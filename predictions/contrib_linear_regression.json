@@ -1,0 +1,50 @@
+{
+  "method": "linear_regression",
+  "intercept": -1.878432273864746,
+  "n_samples": 930,
+  "by_model": [
+    {
+      "model": "ares",
+      "weight": 0.15217559039592743,
+      "mean_signed_contribution": 0.4745646119117737,
+      "mean_abs_contribution": 0.4745646119117737,
+      "abs_share": 0.09598969668149948
+    },
+    {
+      "model": "lmms",
+      "weight": 0.3286728262901306,
+      "mean_signed_contribution": 1.0045565366744995,
+      "mean_abs_contribution": 1.0045565366744995,
+      "abs_share": 0.2031906098127365
+    },
+    {
+      "model": "nli",
+      "weight": 0.24028858542442322,
+      "mean_signed_contribution": 0.7744523286819458,
+      "mean_abs_contribution": 0.7744523286819458,
+      "abs_share": 0.1566476821899414
+    },
+    {
+      "model": "sbert",
+      "weight": 0.004716686904430389,
+      "mean_signed_contribution": 0.01443017739802599,
+      "mean_abs_contribution": 0.01443017739802599,
+      "abs_share": 0.0029187770560383797
+    },
+    {
+      "model": "sensembert",
+      "weight": 0.39072391390800476,
+      "mean_signed_contribution": 1.149132251739502,
+      "mean_abs_contribution": 1.149132251739502,
+      "abs_share": 0.23243379592895508
+    },
+    {
+      "model": "stsbert",
+      "weight": 0.4393167495727539,
+      "mean_signed_contribution": 1.5267761945724487,
+      "mean_abs_contribution": 1.5267761945724487,
+      "abs_share": 0.308819442987442
+    }
+  ],
+  "split": "test"
+}
