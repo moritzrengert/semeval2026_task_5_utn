@@ -176,8 +176,11 @@ Gold vs ensemble test distributions (`average`, `weighted`, `mlp`):
 
 Weighted and MLP contribution pies:
 
-![Weighted contribution pie](predictions/plots/contrib_weighted_best_pie.png)
-![MLP contribution pie](predictions/plots/contrib_mlp_best_pie.png)
+<p align="center">
+  <img src="predictions/plots/contrib_weighted_best_pie.png" width="32%" />
+  <img src="predictions/plots/contrib_linear_regression_pie.png" width="32%" />
+  <img src="predictions/plots/contrib_mlp_best_pie.png" width="32%" />
+</p>
 
 ### Insights
 1. As single experts, `ares` is the strongest by test Spearman (0.5040), but all experts perform worse than the ensemble.
