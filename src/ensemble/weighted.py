@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
 
-from common import build_grid, crossfit_grid_search, softmax
+from common import build_grid, softmax
 
 
 def parse_weights(raw: str, n_models: int) -> np.ndarray:

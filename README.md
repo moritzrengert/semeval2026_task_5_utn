@@ -45,7 +45,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. Ensure annotated dataset files exist at:
+3. Ensure annotated dataset files exist at (should be part of the submodule):
 - `semeval26-05-scripts/data/train.json`
 - `semeval26-05-scripts/data/dev.json`
 - `semeval26-05-scripts/data/test.json`
@@ -54,6 +54,10 @@ pip install -r requirements.txt
 - `src/ares_expert/ares_context_features.pt`
 - `src/lmms_expert/lmms_context_features.pt`
 - `src/sensembert_expert/sensembert_context_features.pt`
+To download them, run the following command
+```bash
+./download_feature_tensors.sh
+```
 
 <details>
   <summary>If missing, generate them using these instructions:</summary>

@@ -7,7 +7,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from common import build_grid, crossfit_grid_search
+from common import build_grid
 from losses import coral_expected_value, coral_loss
 
 
