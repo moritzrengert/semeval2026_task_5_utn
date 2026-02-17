@@ -23,7 +23,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from cross_encoder_expert import config as default_config
-from cross_encoder_expert.data_utils import load_and_process_data, tokenize_cross_encoder
+from cross_encoder_expert.ce_data_utils import load_and_process_data, tokenize_cross_encoder
 from cross_encoder_expert.model import CrossEncoderRegressor
 from cross_encoder_expert.collator import CrossEncoderCollator
 from cross_encoder_expert.metrics import compute_metrics

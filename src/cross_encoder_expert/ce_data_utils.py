@@ -15,11 +15,7 @@ import torch
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-# Use parent src's load_dataset so we share the same data format/order as other experts
-_SRC = Path(__file__).resolve().parents[1]
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
-from data_utils import load_dataset as _load_dataset  # noqa: E402
+from data_utils import load_dataset as _load_dataset
 
 
 def _s(x):

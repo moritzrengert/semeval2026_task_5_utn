@@ -4,3 +4,4 @@ matplotlib>=3.8.0
 scipy
 scikit-learn
 datasets
+sentence_transformers
