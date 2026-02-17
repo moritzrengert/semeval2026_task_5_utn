@@ -26,7 +26,7 @@ if PARENT_DIR not in sys.path:
 from data_utils import load_dataset, expand_annotator_samples
 from expert_dataset import build_context
 
-BASE_DIR = '/home/finisher-pc/Documents/NLU_final'
+BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))  # repo root
 LMMS_FILE = os.path.join(BASE_DIR, 'lmms/lmms_2048.bert-large-cased.txt/lmms_2048.bert-large-cased.txt')
 DATA_DIR = os.path.join(BASE_DIR, 'ambistory-main')
 DEV_FILE = os.path.join(DATA_DIR, 'dev.json')

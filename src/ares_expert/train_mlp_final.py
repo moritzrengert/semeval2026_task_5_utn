@@ -26,7 +26,6 @@ sys.path.append(PARENT_DIR)
 from coral_head import CoralHead
 from losses import coral_loss
 
-BASE_DIR = '/home/finisher-pc/Documents/NLU_final'
 FEATURES_FILE = os.path.join(SCRIPT_DIR, 'ares_context_features.pt')
 MODEL_SAVE_PATH = os.path.join(SCRIPT_DIR, 'ares_coral_model.pth')
 
