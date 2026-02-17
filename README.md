@@ -26,7 +26,7 @@ Ensemble methods:
 
 ## Team Responsibilities
 - **Noas Shaalan**: ARES/LMMS/SensEmBERT feature pipelines and CORAL MLP experts, linear-regression ensemble component.
-- **Adam Jen Khai Lo**: cross-encoder expert implementation.
+- **Adam Jen Khai Lo**: cross-encoder expert implementation, K2 loss implementation, transRELU.
 - **Moritz Rengert**: training/evaluation infrastructure, NLI and SBERT experts, ensemble framework (average/weighted/MLP), shared utilities.
 
 

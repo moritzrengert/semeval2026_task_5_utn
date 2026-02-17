@@ -1,1 +1,1 @@
-"""Cross-encoder regression expert (DeBERTa + frozen mpnet, 4×frozen features)."""
+"""Cross-Encoder Only (No Bi-Encoder/Frozen Embeddings)."""

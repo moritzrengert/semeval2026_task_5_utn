@@ -1,7 +1,8 @@
 """
-Write dev and test prediction JSONs in the same format as other experts (for ensemble).
-Order matches load_dataset(train_path / dev_path / test_path).
-Run from repo root: python src/cross_encoder_expert/predict.py --checkpoint ... --dev-path ... --test-path ... --out-dev ... --out-test ...
+Write dev/test prediction JSONs for the cross-encoder expert.
+
+Run from repo root:
+python src/cross_encoder_expert/predict.py --checkpoint ... --dev-path ... --test-path ...
 Created by Adam Jen Khai Lo.
 """
 
@@ -9,105 +10,133 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
+import sys
 
 import numpy as np
 import torch
 from datasets import Dataset
+from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
 _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from cross_encoder_expert import config as default_config
-from cross_encoder_expert.ce_data_utils import load_and_process_data, tokenize_cross_encoder
-from cross_encoder_expert.model import CrossEncoderRegressor
+from cross_encoder_expert.ce_data_utils import load_dataset, process_examples, tokenize_cross_encoder
 from cross_encoder_expert.collator import CrossEncoderCollator
+from cross_encoder_expert.model import CrossEncoderRegressor
+
+MODEL_NAME = "microsoft/deberta-v3-large"
+MAX_LENGTH = 256
+LABEL_KEY = "average"
+LABEL_MIN = 1.0
+LABEL_MAX = 5.0
+DEFAULT_BATCH_SIZE = 16
 
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--checkpoint", type=str, required=True, help="Path to saved model dir (or checkpoint dir)")
-    p.add_argument("--dev-path", type=str, required=True)
-    p.add_argument("--test-path", type=str, required=True)
-    p.add_argument("--out-dev", type=str, default="predictions/dev_preds_cross_encoder.json")
-    p.add_argument("--out-test", type=str, default="predictions/test_preds_cross_encoder.json")
-    p.add_argument("--label-key", type=str, default=default_config.LABEL_KEY)
-    args = p.parse_args()
-
-    train_data, dev_data, test_data, frozen_dim = load_and_process_data(
-        args.dev_path,  # train not needed for predict
-        args.dev_path,
-        args.test_path,
-        use_frozen_embeddings=default_config.USE_FROZEN_EMBEDDINGS,
-        frozen_model_name=default_config.FROZEN_MODEL_NAME,
-        label_key=args.label_key,
-    )
-    tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
-
-    def tokenize_fn(batch):
-        return tokenize_cross_encoder(
-            batch, tokenizer, default_config.MAX_LENGTH, default_config.USE_FROZEN_EMBEDDINGS
+def load_state_dict(checkpoint: Path) -> tuple[dict, Path]:
+    candidates = []
+    if checkpoint.is_file():
+        candidates.append(checkpoint)
+    else:
+        candidates.extend(
+            [
+                checkpoint / "cross_encoder_state.pt",
+                checkpoint / "cross_encoder_only_state.pt",
+                checkpoint / "pytorch_model.bin",
+            ]
         )
 
-    dev_ds = Dataset.from_list(dev_data).map(tokenize_fn, batched=True)
-    test_ds = Dataset.from_list(test_data).map(tokenize_fn, batched=True)
-    keep_cols = ["input_ids", "attention_mask", "labels", "stdev"]
-    if "token_type_ids" in dev_ds.column_names:
-        keep_cols.append("token_type_ids")
-    if default_config.USE_FROZEN_EMBEDDINGS:
-        keep_cols.extend(["frozen_a", "frozen_b"])
-    dev_ds.remove_columns([c for c in dev_ds.column_names if c not in keep_cols])
-    test_ds.remove_columns([c for c in test_ds.column_names if c not in keep_cols])
-
-    model = CrossEncoderRegressor(
-        default_config.MODEL_NAME,
-        frozen_dim=frozen_dim if default_config.USE_FROZEN_EMBEDDINGS else 0,
-        use_dual_path=default_config.USE_DUAL_PATH,
-        pooling=default_config.POOLING,
+    for path in candidates:
+        if path.exists():
+            state = torch.load(path, map_location="cpu")
+            if isinstance(state, dict) and "state_dict" in state:
+                state = state["state_dict"]
+            if isinstance(state, dict):
+                return state, path
+    raise FileNotFoundError(
+        f"No model state found at {checkpoint}. "
+        "Expected one of: cross_encoder_state.pt, cross_encoder_only_state.pt, pytorch_model.bin"
     )
-    state_path = Path(args.checkpoint) / "cross_encoder_state.pt"
-    if not state_path.exists():
-        state_path = Path(args.checkpoint) / "pytorch_model.bin"
-    if state_path.exists():
-        state = torch.load(state_path, map_location="cpu", weights_only=True)
-        if isinstance(state, dict) and "state_dict" in state:
-            state = state["state_dict"]
-        model.load_state_dict(state, strict=False)
-    else:
-        raise FileNotFoundError(f"No weights found at {args.checkpoint}. Train first and pass --checkpoint to the output dir.")
 
+
+def write_predictions(path: Path, preds: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = [{"prediction": float(x)} for x in preds.tolist()]
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def build_dataset(path: str, tokenizer, label_key: str) -> Dataset:
+    records = process_examples(load_dataset(path), label_key=label_key)
+
+    def tokenize_fn(batch):
+        return tokenize_cross_encoder(batch, tokenizer, MAX_LENGTH)
+
+    ds = Dataset.from_list(records).map(tokenize_fn, batched=True)
+    keep_cols = ["input_ids", "attention_mask", "labels", "stdev"]
+    if "token_type_ids" in ds.column_names:
+        keep_cols.append("token_type_ids")
+    return ds.remove_columns([c for c in ds.column_names if c not in keep_cols])
+
+
+def run_predict(
+    model: CrossEncoderRegressor,
+    ds: Dataset,
+    tokenizer,
+    device: torch.device,
+    batch_size: int,
+) -> np.ndarray:
+    loader = DataLoader(ds, batch_size=batch_size, shuffle=False, collate_fn=CrossEncoderCollator(tokenizer))
+    preds = []
+    model.eval().to(device)
+    with torch.no_grad():
+        for batch in loader:
+            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            outputs = model(**{k: v for k, v in batch.items() if k not in ("labels", "stdev")})
+            preds.append(outputs["logits"].detach().cpu().numpy())
+    if not preds:
+        return np.array([], dtype=np.float32)
+    stacked = np.concatenate(preds, axis=0).astype(np.float32).reshape(-1)
+    return np.clip(stacked, LABEL_MIN, LABEL_MAX)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoint", type=str, required=True, help="Checkpoint dir or state file path.")
+    parser.add_argument("--dev-path", type=str, required=True)
+    parser.add_argument("--test-path", type=str, required=True)
+    parser.add_argument("--out-dev", type=str, default="predictions/dev_preds_stsbert.json")
+    parser.add_argument("--out-test", type=str, default="predictions/test_preds_stsbert.json")
+    parser.add_argument("--label-key", type=str, default=LABEL_KEY)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    args = parser.parse_args()
+
+    checkpoint = Path(args.checkpoint)
+    tokenizer_source = str(checkpoint) if checkpoint.is_dir() else MODEL_NAME
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
+    except Exception:
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+
+    model = CrossEncoderRegressor(MODEL_NAME)
+    state_dict, loaded_path = load_state_dict(checkpoint)
+    model.load_state_dict(state_dict, strict=False)
+
+    dev_ds = build_dataset(args.dev_path, tokenizer, args.label_key)
+    test_ds = build_dataset(args.test_path, tokenizer, args.label_key)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    model.eval()
-    collator = CrossEncoderCollator(tokenizer)
 
-    def run_predict(dataset):
-        from torch.utils.data import DataLoader
-        loader = DataLoader(dataset, batch_size=default_config.BATCH_SIZE, collate_fn=collator)
-        preds = []
-        with torch.no_grad():
-            for batch in loader:
-                batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-                out = model(**{k: v for k, v in batch.items() if k not in ("labels", "stdev")})
-                preds.append(out["logits"].cpu().numpy())
-        preds = np.concatenate(preds, axis=0).squeeze()
-        preds = np.clip(preds, default_config.LABEL_MIN, default_config.LABEL_MAX)
-        return preds
+    dev_preds = run_predict(model, dev_ds, tokenizer, device, args.batch_size)
+    test_preds = run_predict(model, test_ds, tokenizer, device, args.batch_size)
 
-    dev_preds = run_predict(dev_ds)
-    test_preds = run_predict(test_ds)
-
-    # Format expected by ensemble: list of {"prediction": float} (same order as dev/test)
-    Path(args.out_dev).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out_test).parent.mkdir(parents=True, exist_ok=True)
-    with open(args.out_dev, "w") as f:
-        json.dump([{"prediction": float(p)} for p in dev_preds.tolist()], f, indent=2)
-    with open(args.out_test, "w") as f:
-        json.dump([{"prediction": float(p)} for p in test_preds.tolist()], f, indent=2)
-    print(f"Wrote {args.out_dev} ({len(dev_preds)} dev) and {args.out_test} ({len(test_preds)} test). Use these with --dev-preds / --test-preds in ensemble.")
+    out_dev = Path(args.out_dev)
+    out_test = Path(args.out_test)
+    write_predictions(out_dev, dev_preds)
+    write_predictions(out_test, test_preds)
+    print(f"Loaded weights from {loaded_path}")
+    print(f"Wrote {out_dev} ({len(dev_preds)} rows)")
+    print(f"Wrote {out_test} ({len(test_preds)} rows)")
 
 
 if __name__ == "__main__":

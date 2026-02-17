@@ -1,158 +1,186 @@
 """
-Train cross-encoder expert. Same data format/order as other experts (uses Moritz load_dataset).
-Run from repo root: python src/cross_encoder_expert/train.py --train-path ... --dev-path ... --save-path ...
+Train cross-encoder expert.
+
+Run from repo root:
+python src/cross_encoder_expert/train.py --train-path ... --dev-path ... --test-path ...
 Created by Adam Jen Khai Lo.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
-import os
-import shutil
-import sys
 from pathlib import Path
+import sys
 
-import numpy as np
 import torch
 from datasets import Dataset
-from transformers import AutoTokenizer, TrainingArguments, set_seed
-
-_SRC = Path(__file__).resolve().parents[1]
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
-
-from cross_encoder_expert import config as default_config
-from cross_encoder_expert.ce_data_utils import load_and_process_data, tokenize_cross_encoder
-from cross_encoder_expert.model import CrossEncoderRegressor
-from cross_encoder_expert.collator import CrossEncoderCollator
-from cross_encoder_expert.metrics import compute_metrics
-from cross_encoder_expert.trainer import RegressionLossTrainer
+from transformers import AutoTokenizer, Trainer, TrainingArguments, set_seed
 
 try:
     from transformers import EarlyStoppingCallback
 except ImportError:
     EarlyStoppingCallback = None
 
+_SRC = Path(__file__).resolve().parents[1]
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
-def main():
-    p = argparse.ArgumentParser(description="Train cross-encoder regression expert")
-    p.add_argument("--train-path", type=str, default="train.json")
-    p.add_argument("--dev-path", type=str, default="dev.json")
-    p.add_argument("--test-path", type=str, default="test.json")
-    p.add_argument("--save-path", type=str, default=None, help="Save best model here (e.g. checkpoints/cross_encoder.pt)")
-    p.add_argument("--output-dir", type=str, default=None, help="Trainer output dir (default: same dir as save-path or ./cross_encoder_results)")
-    p.add_argument("--label-key", type=str, default=default_config.LABEL_KEY)
-    p.add_argument("--epochs", type=int, default=default_config.EPOCHS)
-    p.add_argument("--lr", type=float, default=default_config.LR)
-    p.add_argument("--batch-size", type=int, default=default_config.BATCH_SIZE)
-    p.add_argument("--seed", type=int, default=default_config.SEED)
-    args = p.parse_args()
+from cross_encoder_expert.ce_data_utils import load_dataset, process_examples, tokenize_cross_encoder
+from cross_encoder_expert.collator import CrossEncoderCollator
+from cross_encoder_expert.losses import SmoothK2Loss
+from cross_encoder_expert.metrics import compute_metrics
+from cross_encoder_expert.model import CrossEncoderRegressor
+
+MODEL_NAME = "microsoft/deberta-v3-large"
+MAX_LENGTH = 256
+LABEL_KEY = "average"
+OUTPUT_DIR = "./cross_encoder_results"
+
+DEFAULT_SEED = 42
+DEFAULT_LR = 8e-6
+DEFAULT_BATCH_SIZE = 16
+DEFAULT_EPOCHS = 25
+
+
+class SimpleRegressionTrainer(Trainer):
+    """Trainer that applies SmoothK2 regression loss."""
+
+    def __init__(self, x0: float = 0.15, k: float = 1.0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.loss_fn = SmoothK2Loss(x0=x0, k=k)
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        labels = inputs.get("labels").float()
+        model_inputs = {k: v for k, v in inputs.items() if k not in ("labels", "stdev")}
+        outputs = model(**model_inputs)
+        loss = self.loss_fn(outputs["logits"], labels)
+        return (loss, outputs) if return_outputs else loss
+
+    def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
+        labels = inputs.get("labels")
+        with torch.no_grad():
+            model_inputs = {k: v for k, v in inputs.items() if k not in ("labels", "stdev")}
+            outputs = model(**model_inputs)
+            loss = self.loss_fn(outputs["logits"], labels.float()) if labels is not None else None
+        if prediction_loss_only:
+            return (loss, None, None)
+        return (loss, outputs["logits"].detach(), labels)
+
+
+def _build_callbacks():
+    callbacks = []
+    if EarlyStoppingCallback is not None:
+        callbacks.append(EarlyStoppingCallback(early_stopping_patience=5))
+    return callbacks
+
+
+def _cpu_state_dict(model: torch.nn.Module) -> dict:
+    return {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Train cross-encoder regression expert")
+    parser.add_argument("--train-path", type=str, required=True)
+    parser.add_argument("--dev-path", type=str, required=True)
+    parser.add_argument("--test-path", type=str, required=True)
+    parser.add_argument("--save-path", type=str, default=None, help="Optional compatibility checkpoint file.")
+    parser.add_argument("--output-dir", type=str, default=OUTPUT_DIR)
+    parser.add_argument("--label-key", type=str, default=LABEL_KEY)
+    parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS)
+    parser.add_argument("--lr", type=float, default=DEFAULT_LR)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--loss", type=str, default="smooth_k2", choices=["smooth_k2"])
+    parser.add_argument("--x0", type=float, default=0.15, help="SmoothK2 loss x0 parameter.")
+    parser.add_argument("--k", type=float, default=1.0, help="SmoothK2 loss k parameter.")
+    args = parser.parse_args()
 
     set_seed(args.seed)
-    output_dir = args.output_dir or (Path(args.save_path).parent if args.save_path else default_config.OUTPUT_DIR)
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    train_data, dev_data, test_data, frozen_dim = load_and_process_data(
-        args.train_path,
-        args.dev_path,
-        args.test_path,
-        use_frozen_embeddings=default_config.USE_FROZEN_EMBEDDINGS,
-        frozen_model_name=default_config.FROZEN_MODEL_NAME,
-        label_key=args.label_key,
-    )
-    tokenizer = AutoTokenizer.from_pretrained(default_config.MODEL_NAME)
+    print(f"Loading data from {args.train_path}, {args.dev_path}, {args.test_path}...")
+    train_data = process_examples(load_dataset(args.train_path), label_key=args.label_key)
+    dev_data = process_examples(load_dataset(args.dev_path), label_key=args.label_key)
+    test_data = process_examples(load_dataset(args.test_path), label_key=args.label_key)
+    print(f"Loaded: {len(train_data)} train, {len(dev_data)} dev, {len(test_data)} test")
+
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
     def tokenize_fn(batch):
-        return tokenize_cross_encoder(
-            batch,
-            tokenizer,
-            default_config.MAX_LENGTH,
-            default_config.USE_FROZEN_EMBEDDINGS,
-        )
+        return tokenize_cross_encoder(batch, tokenizer, MAX_LENGTH)
 
     train_ds = Dataset.from_list(train_data).map(tokenize_fn, batched=True)
     dev_ds = Dataset.from_list(dev_data).map(tokenize_fn, batched=True)
-    test_ds = Dataset.from_list(test_data).map(tokenize_fn, batched=True)
+
     keep_cols = ["input_ids", "attention_mask", "labels", "stdev"]
     if "token_type_ids" in train_ds.column_names:
         keep_cols.append("token_type_ids")
-    if default_config.USE_FROZEN_EMBEDDINGS:
-        keep_cols.extend(["frozen_a", "frozen_b"])
-    for ds in (train_ds, dev_ds, test_ds):
-        ds.remove_columns([c for c in ds.column_names if c not in keep_cols])
+    train_ds = train_ds.remove_columns([c for c in train_ds.column_names if c not in keep_cols])
+    dev_ds = dev_ds.remove_columns([c for c in dev_ds.column_names if c not in keep_cols])
 
+    model = CrossEncoderRegressor(MODEL_NAME)
     collator = CrossEncoderCollator(tokenizer)
-    model = CrossEncoderRegressor(
-        default_config.MODEL_NAME,
-        frozen_dim=frozen_dim if default_config.USE_FROZEN_EMBEDDINGS else 0,
-        use_dual_path=default_config.USE_DUAL_PATH,
-        pooling=default_config.POOLING,
-    )
-    metrics_fn = lambda eval_pred: compute_metrics(eval_pred, default_config.LABEL_MIN, default_config.LABEL_MAX)
 
     training_args = TrainingArguments(
-        output_dir=output_dir,
+        output_dir=str(output_dir),
         eval_strategy="epoch",
         save_strategy="epoch",
         save_total_limit=1,
         load_best_model_at_end=True,
-        metric_for_best_model="mae",
+        metric_for_best_model="eval_mae",
         greater_is_better=False,
         learning_rate=args.lr,
         lr_scheduler_type="cosine",
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         num_train_epochs=args.epochs,
-        weight_decay=default_config.WEIGHT_DECAY,
-        warmup_ratio=default_config.WARMUP_RATIO,
+        weight_decay=0.03,
+        warmup_ratio=0.1,
         max_grad_norm=1.0,
         logging_steps=10,
-        logging_first_step=True,
         report_to="none",
         seed=args.seed,
         remove_unused_columns=False,
-        disable_tqdm=False,
-        dataloader_num_workers=0,
+        fp16=torch.cuda.is_available(),
     )
-    callbacks = []
-    if getattr(default_config, "EARLY_STOPPING_PATIENCE", None) and EarlyStoppingCallback is not None:
-        callbacks.append(EarlyStoppingCallback(early_stopping_patience=default_config.EARLY_STOPPING_PATIENCE))
 
-    trainer = RegressionLossTrainer(
-        loss_type=default_config.LOSS_TYPE,
-        loss_x0=default_config.LOSS_X0,
-        loss_k=default_config.LOSS_K,
+    trainer = SimpleRegressionTrainer(
+        x0=args.x0,
+        k=args.k,
         model=model,
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=dev_ds,
         tokenizer=tokenizer,
         data_collator=collator,
-        compute_metrics=metrics_fn,
-        callbacks=callbacks,
+        compute_metrics=compute_metrics,
+        callbacks=_build_callbacks(),
     )
+
     trainer.train()
+    print("Training complete")
 
-    log_path = os.path.join(output_dir, "training_log.json")
-    with open(log_path, "w") as f:
-        json.dump(trainer.state.log_history, f, indent=2)
-    print(f"Training log saved to {log_path}")
+    trainer.save_model(str(output_dir))
+    state_dict = _cpu_state_dict(trainer.model)
 
-    trainer.save_model(output_dir)
-    trainer.save_state()
-    for name in os.listdir(output_dir):
-        path = os.path.join(output_dir, name)
-        if os.path.isdir(path) and name.startswith("checkpoint-"):
-            shutil.rmtree(path)
-    print(f"Best model saved to {output_dir}")
+    state_path = output_dir / "cross_encoder_state.pt"
+    torch.save(state_dict, state_path)
+    # Backward-compatible file name for prior runs.
+    legacy_state_path = output_dir / "cross_encoder_only_state.pt"
+    torch.save(state_dict, legacy_state_path)
+    print(f"Model artifacts written to {output_dir}")
 
-    state_path = os.path.join(output_dir, "cross_encoder_state.pt")
-    torch.save(model.state_dict(), state_path)
-    print(f"State dict saved to {state_path}")
-    if args.save_path and os.path.abspath(output_dir) != os.path.abspath(Path(args.save_path).parent):
-        torch.save({"state_dict": model.state_dict(), "expert": "cross_encoder"}, args.save_path)
-        print(f"Also saved to {args.save_path} for ensemble/scripts.")
+    if args.save_path:
+        save_path = Path(args.save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({"state_dict": state_dict, "expert": "cross_encoder"}, save_path)
+        print(f"Compatibility checkpoint saved to {save_path}")
+
+    print("Final evaluation on dev set:")
+    for key, val in trainer.evaluate().items():
+        if isinstance(val, float):
+            print(f"  {key}: {val:.4f}")
 
 
 if __name__ == "__main__":
